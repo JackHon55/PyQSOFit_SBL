@@ -3,6 +3,7 @@
 ### Go to https://github.com/legolason/PyQSOFit and checkout their demo code 'example.ipynb' for a quick start !!!
 
 See example_sdss.py for SDSS examples
+
 See example_wifes.py for non-SDSS examples
 
 The code takes an input spectrum (observed-frame wavelength, flux density and error arrays) and the redshift as input parameters, performs the fitting in the restframe, and outputs the best-fit parameters and quality-checking plots to the paths specified by the user. 
