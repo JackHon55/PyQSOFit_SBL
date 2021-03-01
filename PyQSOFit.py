@@ -970,6 +970,9 @@ class QSOFit():
                     # call kmpfit for lines
 
                     line_fit = self._do_line_kmpfit(linelist, line_flux, ind_line, ind_n, nline_fit, ngauss_fit)
+                    # plt.figure()
+                    # plt.plot(np.log(wave[ind_n]), line_flux[ind_n])
+                    # plt.plot(np.log(wave[ind_n]), manygauss(np.log(wave[ind_n]), line_fit.params))
                     # calculate MC err
                     if self.MC == True and self.n_trails > 0:
                         all_para_std, fwhm_std, skew_std, sigma_std, ew_std, peak_std, area_std = \

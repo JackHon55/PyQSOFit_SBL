@@ -17,22 +17,22 @@ path = 'F:/PyQSOtests/'
 # The starting parameters are a bit tricky for me to explain, so I would just refer to example code
 # In the end, the code is meant to smartly fit the lines, so the starting parameter will just lower the room for error
 # and fitting time
-newdata = np.rec.array([(6564.61, 'Ha', 6400., 6800., 'Ha_br', 2, 5e-3, 0.004, 0.05, 0.015, 0, 0, 0, 0.05),
-                        (6564.61, 'Ha', 6400., 6800., 'Ha_na', 1, 1e-3, 5e-4, 0.0017, 0.01, 1, 1, 0, 0.002),
-                        (6549.85, 'Ha', 6400., 6800., 'NII6549', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 1, 1, 1, 0.001),
-                        (6585.28, 'Ha', 6400., 6800., 'NII6585', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 1, 1, 1, 0.003),
-                        (6718.29, 'Ha', 6400., 6800., 'SII6718', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 1, 1, 2, 0.001),
-                        (6732.67, 'Ha', 6400., 6800., 'SII6732', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 1, 1, 2, 0.001),
+newdata = np.rec.array([(6564.61, 'Ha', 6400., 6800., 'Ha_br', 2, 5e-3, 0.004, 0.05, 0.015, 0, 0.05),
+                        (6564.61, 'Ha', 6400., 6800., 'Ha_na', 1, 1e-3, 5e-4, 0.0017, 0.01, 0, 0.002),
+                        (6549.85, 'Ha', 6400., 6800., 'NII6549', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 0, 0.001),
+                        (6585.28, 'Ha', 6400., 6800., 'NII6585', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 0, 0.003),
+                        (6718.29, 'Ha', 6400., 6800., 'SII6718', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 0, 0.001),
+                        (6732.67, 'Ha', 6400., 6800., 'SII6732', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 0, 0.001),
 
-                        (4862.68, 'Hb', 4640., 5100., 'Hb_br', 1, 5e-3, 0.004, 0.05, 0.01, 0, 0, 0, 0.01),
-                        (4862.68, 'Hb', 4640., 5100., 'Hb_na', 1, 1e-3, 2.3e-4, 0.0017, 0.01, 1, 1, 0, 0.002),
-                        (4960.30, 'Hb', 4640., 5100., 'OIII4959c', 1, 1e-3, 2.3e-4, 0.0017, 0.01, 1, 1, 0, 0.002),
-                        (5008.24, 'Hb', 4640., 5100., 'OIII5007c', 1, 1e-3, 2.3e-4, 0.0017, 0.01, 1, 1, 0, 0.004),
+                        (4862.68, 'Hb', 4640., 5100., 'Hb_br', 1, 5e-3, 0.004, 0.05, 0.01, 0, 0.01),
+                        (4862.68, 'Hb', 4640., 5100., 'Hb_na', 1, 1e-3, 2.3e-4, 0.0017, 0.01, 0, 0.002),
+                        (4960.30, 'Hb', 4640., 5100., 'OIII4959c', 1, 1e-3, 2.3e-4, 0.0017, 0.01, 0, 0.002),
+                        (5008.24, 'Hb', 4640., 5100., 'OIII5007c', 1, 1e-3, 2.3e-4, 0.0017, 0.01, 0, 0.004),
                         ],
                        formats='float32,a20,float32,float32,a20,float32,float32,float32,float32,'
-                               'float32,float32,float32,float32,float32',
+                               'float32,float32,float32,',
                        names='lambda,compname,minwav,maxwav,linename,ngauss,inisig,minsig,'
-                             'maxsig,voff,vindex,windex,findex,fvalue')
+                             'maxsig,voff,iniskw,fvalue')
 # ------header-----------------
 hdr = fits.Header()
 hdr['lambda'] = 'Vacuum Wavelength in Ang'
@@ -43,13 +43,10 @@ hdr['inisig'] = 'Initial guess of linesigma [in lnlambda]'
 hdr['minsig'] = 'Lower range of line sigma [lnlambda]'
 hdr['maxsig'] = 'Upper range of line sigma [lnlambda]'
 hdr['voff  '] = 'Limits on velocity offset from the central wavelength [lnlambda]'
-hdr['vindex'] = 'Entries w/ same NONZERO vindex constrained to have same velocity'
-hdr['windex'] = 'Entries w/ same NONZERO windex constrained to have same width'
-hdr['findex'] = 'Entries w/ same NONZERO findex have constrained flux ratios'
+hdr['iniskw'] = 'Initial guess of lineskew'
 hdr['fvalue'] = 'Relative scale factor for entries w/ same findex'
 # ------save line info-----------
 hdu = fits.BinTableHDU(data=newdata, header=hdr, name='data')
-hdu.writeto(path + 'qsopar.fits', overwrite=True)
 
 # Up until here is to create the initial parameter file to tell the code what to fit.
 # You can techinically run this section separately just like in the example code with jupiter notebook
