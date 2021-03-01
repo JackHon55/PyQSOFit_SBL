@@ -7,7 +7,7 @@ from PyQSO.PyQSOFit import *
 import matplotlib.pyplot as plt
 import warnings
 
-
+# Ignore this file and this version
 warnings.filterwarnings("ignore")
 
 path = 'F:/PyQSOtests/'
