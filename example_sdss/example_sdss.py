@@ -8,6 +8,7 @@ from scipy.stats import skewnorm
 rest_norm_range = np.asarray([5200, 6200])
 warnings.filterwarnings("ignore")
 
+# Note the differece in parameters. Tie_lines params are gone, and a single initial skew value is left
 newdata = np.rec.array([  # (6564.61, 'Ha', 6400., 6800., 'Ha_br', 3, 5e-3, 0.004, 0.05, 0.015, 0, 0.05),
     # (6564.61, 'Ha', 6400., 6800., 'Ha_na', 1, 1e-3, 5e-4, 0.0017, 0.01, 0, 0.002),
     # (6549.85, 'Ha', 6400., 6800., 'NII6549', 1, 1e-3, 2.3e-4, 0.0017, 5e-3, 0, 0.001),
