@@ -1,7 +1,7 @@
 import glob, os, sys, timeit
 from PyQSO.rebin_spec import rebin_spec
 import matplotlib
-from PyQSO.PyQSOFit import *
+from PyQSO.PyQSOFit_SBL import *
 import matplotlib.pyplot as plt
 import warnings
 

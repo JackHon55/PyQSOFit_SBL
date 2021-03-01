@@ -1,6 +1,6 @@
 import glob, os, sys, timeit
 import matplotlib
-from PyQSO.PyQSOFit import *
+from PyQSO.PyQSOFit_SBL import *
 import matplotlib.pyplot as plt
 import warnings
 from scipy.stats import skewnorm

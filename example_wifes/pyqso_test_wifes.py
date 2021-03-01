@@ -3,7 +3,7 @@ from Spectra_handling.AllSpectrum import *
 from Spectra_handling.Spectrum_utls import *
 from rebin_spec import rebin_spec
 import matplotlib
-from PyQSO.PyQSOFit import *
+from PyQSO.PyQSOFit_SBL import *
 import matplotlib.pyplot as plt
 import warnings
 
