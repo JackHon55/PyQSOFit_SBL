@@ -4,7 +4,6 @@ import matplotlib
 from PyQSO.PyQSOFit import *
 import matplotlib.pyplot as plt
 import warnings
-from astropy.io import ascii
 
 
 warnings.filterwarnings("ignore")
