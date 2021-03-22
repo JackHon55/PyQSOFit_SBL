@@ -1137,10 +1137,10 @@ class QSOFit():
         """
         pp = pp.astype(float)
         if linetype == 'broad':
-            ind_br = np.repeat(np.where(pp[2::4] > 0.0017, True, False), 4)
+            ind_br = np.repeat(np.where(np.round(pp[2::4], 4) > 0.0017, True, False), 4)
 
         elif linetype == 'narrow':
-            ind_br = np.repeat(np.where(pp[2::4] <= 0.0017, True, False), 4)
+            ind_br = np.repeat(np.where(np.round(pp[2::4], 4) <= 0.0017, True, False), 4)
 
         else:
             raise RuntimeError("line type should be 'broad' or 'narrow'!")
@@ -1396,14 +1396,46 @@ class QSOFit():
                 yval = yval + onegauss(xval, pp[i * 4:(i + 1) * 4])
             return yval
 
-    def line_result_output(self, xname, c):
-        a = []
+    def line_result_output(self, xname, c, to_print=0):
+        line_res_name = ['fwhm', 'sigma', 'skewness', 'EW', 'Peak', 'Area']
+        # err_name_1 = ['scale', 'centerwave', 'sigma', 'skewness']
+        # err_name_2 = ['fwhm', 'sigma', 'ew', 'peak', 'area']
+        # err_ask = ['whole_fwhm', 'whole_sigma', 'skewness', 'whole_ew', 'whole_peak', 'whole_area']
+        xname_id = []
+        xerr_id_1 = []
+        xerr_id_2 = []
         for i in range(0, len(self.line_result_name)):
             if xname in self.line_result_name[i] and 'err' not in self.line_result_name[i]:
-                a.append(i)
-        a = np.asarray(a)
-        b = 0
+                xname_id.append(i)
+            if xname in self.line_result_name[i] and 'err' in self.line_result_name[i]:
+                xerr_id_1.append(i)
+            if xname.split('_')[0] in self.line_result_name[i] and 'err' in self.line_result_name[i]:
+                if 'whole' in self.line_result_name[i]:
+                    xerr_id_2.append(i)
+        xname_id = np.asarray(xname_id)
+
+        if len(xerr_id_1) != 0 and len(xerr_id_2) != 0 and c == 'broad':
+            xerr_id = np.asarray([xerr_id_2[0], xerr_id_2[1], xerr_id_1[3], xerr_id_2[2], xerr_id_2[3], xerr_id_2[4]])
+            xerr_val = np.asarray(self.line_result[xerr_id], dtype='float')
+        elif len(xerr_id_1) != 0 and len(xerr_id_2) != 0 and c == 'narrow':
+            xerr_id = np.asarray([xerr_id_2[0], xerr_id_1[2], xerr_id_1[3], xerr_id_2[2], xerr_id_1[1], xerr_id_2[4]])
+            xerr_val = np.asarray(self.line_result[xerr_id], dtype='float')
+            xerr_val = np.asarray([0, xerr_val[1], xerr_val[2], 0, xerr_val[4], 0])
+        else:
+            xerr_val = np.zeros_like(line_res_name)
+
+        xval_id = 0
         for i in range(0, len(self.linelist)):
             if xname in self.linelist[i][4]:
-                b = i
-        return self.line_prop(self.linelist[b][0], self.line_result[a], c)
+                xval_id = i
+
+        xres = self.line_prop(self.linelist[xval_id][0], self.line_result[xname_id], c)
+        if to_print == 1:
+            for k in range(0, len(line_res_name)):
+                print((line_res_name[k] + '               ')[:15] + ':', '\t', np.round(xres[k], 3))
+                print((line_res_name[k] + '_err           ')[:15] + ':', '\t', np.round(xerr_val[k], 3))
+        return np.asarray([xres, xerr_val])
+
+# Add CIV abs optional in continuum removal
+# Add err functionality in line_result_output
+# Add Fe emission scaling output functionality

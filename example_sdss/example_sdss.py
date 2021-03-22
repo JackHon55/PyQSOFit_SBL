@@ -101,7 +101,7 @@ start = timeit.default_timer()
 # do the fitting
 q.Fit(name=None, nsmooth=1, and_or_mask=False, deredden=False, reject_badpix=False, wave_range=None,
       wave_mask=None, decomposition_host=False, Mi=None, npca_gal=5, npca_qso=20,
-      Fe_uv_op=True, poly=True, BC=False, rej_abs=False, initial_guess=None, MC=False,
+      Fe_uv_op=True, poly=True, BC=False, rej_abs=False, initial_guess=None, MC=True,
       n_trails=5, linefit=True, save_result=True, plot_fig=True, save_fig=True, plot_line_name=True, plot_legend=True,
       dustmap_path=None, save_fig_path=path3, save_fits_path=path2, save_fits_name=None)
 
