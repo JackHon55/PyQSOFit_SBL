@@ -1,13 +1,12 @@
 # A code for quasar spectrum fitting
-# Last modified on 3/24/2020
-# Auther: Hengxiao Guo AT UIUC
-# Email: hengxiaoguo AT gmail DOT com
-# Co-Auther Shu Wang, Yue Shen
-# version 1.0
+# Original code by Hengxiao Guo at https://github.com/legolason/PyQSOFit/blob/master/PyQSOFit.py
+# Last modified on 2022-May-08
+# Author: Jack Hon (Wei Jeat) AT University of Melbourne
+# Email: jack_hon55@hotmail.com
 # -------------------------------------------------
 
-# fix the error problem, previous error was underestimated by a factor of 1+z
-
+# re-enabled tie lines through different input method
+# enabled error output for narrow lines
 
 import glob, os, sys, timeit
 import matplotlib
@@ -100,7 +99,7 @@ def balmer_conti(xval, pp):
     tau = pp[2] * (xval / lambda_BE) ** 3
     result = pp[0] * bbflux * (1. - np.exp(-tau))
     ind = np.where(xval > lambda_BE, True, False)
-    if ind.any() == True:
+    if ind.any():
         result[ind] = 0.
     return result
 
@@ -142,7 +141,7 @@ def manygauss(xval, pp):
         return yval
 
 
-class QSOFit():
+class QSOFit:
 
     def __init__(self, lam, flux, err, z, ra=- 999., dec=-999., plateid=None, mjd=None, fiberid=None, path=None,
                  and_mask=None, or_mask=None):
@@ -191,7 +190,8 @@ class QSOFit():
         self.path = path
 
     def Fit(self, name=None, nsmooth=1, and_or_mask=True, reject_badpix=True, deredden=True, wave_range=None,
-            wave_mask=None, decomposition_host=True, BC03=False, Mi=None, npca_gal=5, npca_qso=20, Fe_uv_op=True,
+            wave_mask=None, empty_mask=None, decomposition_host=True, BC03=False, Mi=None, npca_gal=5, npca_qso=20,
+            Fe_uv_op=True,
             poly=False, BC=False, rej_abs=False, initial_guess=None, MC=True, n_trails=1, linefit=True,
             save_result=True, plot_fig=True, save_fig=True, plot_line_name=True, plot_legend=True, dustmap_path=None,
             save_fig_path=None, save_fits_path=None, save_fits_name=None):
@@ -398,6 +398,7 @@ class QSOFit():
         self.name = name
         self.wave_range = wave_range
         self.wave_mask = wave_mask
+        self.empty_mask = empty_mask
         self.BC03 = BC03
         self.Mi = Mi
         self.npca_gal = npca_gal
@@ -429,9 +430,9 @@ class QSOFit():
             self.sdss_name = name
 
         # set default path for figure and fits
-        if save_result == True and save_fits_path == None:
+        if save_result and save_fits_path == None:
             save_fits_path = self.path
-        if save_fig == True and save_fig_path == None:
+        if save_fig and save_fig_path == None:
             save_fig_path = self.path
         if save_fits_name == None:
             if self.sdss_name == '':
@@ -461,15 +462,15 @@ class QSOFit():
         if nsmooth is not None:
             self.flux = smooth(self.flux, nsmooth)
             self.err = smooth(self.err, nsmooth)
-        if (and_or_mask == True) and (self.and_mask is not None or self.or_mask is not None):
+        if (and_or_mask) and (self.and_mask is not None or self.or_mask is not None):
             self._MaskSdssAndOr(self.lam, self.flux, self.err, self.and_mask, self.or_mask)
-        if reject_badpix == True:
+        if reject_badpix:
             self._RejectBadPix(self.lam, self.flux, self.err)
         if wave_range is not None:
             self._WaveTrim(self.lam, self.flux, self.err, self.z)
         if wave_mask is not None:
             self._WaveMsk(self.lam, self.flux, self.err, self.z)
-        if deredden == True and self.ra != -999. and self.dec != -999.:
+        if deredden and self.ra != -999. and self.dec != -999.:
             self._DeRedden(self.lam, self.flux, self.ra, self.dec, dustmap_path)
 
         self._RestFrame(self.lam, self.flux, self.err, self.z)
@@ -477,21 +478,21 @@ class QSOFit():
         self._OrignialSpec(self.wave, self.flux, self.err)
 
         # do host decomposition --------------
-        if self.z < 1.16 and decomposition_host == True:
+        if self.z < 1.16 and decomposition_host:
             self._DoDecomposition(self.wave, self.flux, self.err, self.path)
         else:
             self.decomposed = False
-            if self.z > 1.16 and decomposition_host == True:
+            if self.z > 1.16 and decomposition_host:
                 print('redshift larger than 1.16 is not allowed for host decomposion!')
 
         # fit continuum --------------------
         self._DoContiFit(self.wave, self.flux, self.err, self.ra, self.dec, self.plateid, self.mjd, self.fiberid)
         # fit line
-        if linefit == True:
+        if linefit:
             self._DoLineFit(self.wave, self.line_flux, self.err, self.conti_fit)
 
         # save data -------
-        if save_result == True:
+        if save_result:
             if linefit == False:
                 self.line_result = np.array([])
                 self.line_result_name = np.array([])
@@ -499,7 +500,7 @@ class QSOFit():
                              save_fits_path, save_fits_name)
 
         # plot fig and save ------
-        if plot_fig == True:
+        if plot_fig:
             if linefit == False:
                 self.gauss_result = np.array([])
                 self.all_comp_range = np.array([])
@@ -657,7 +658,7 @@ class QSOFit():
             gal = galaxy[1].data
             wave_gal = gal['wave'].flatten()
             flux_gal = gal['pca'].reshape(gal['pca'].shape[1], gal['pca'].shape[2])
-        if self.BC03 == True:
+        if self.BC03:
             cc = 0
             flux03 = np.array([])
             for i in glob.glob(path + '/bc03/*.gz'):
@@ -744,7 +745,8 @@ class QSOFit():
                                [1690., 1705.], [1770., 1810.], [1970., 2400.], [2480., 2675.],
                                [2925., 3400.], [3775., 3832.], [4000., 4050.], [4200., 4230.],
                                [4435., 4640.], [5100., 5535.], [6005., 6035.], [6110., 6250.],
-                               [6800., 7000.], [7160., 7180.], [7500., 7800.], [8050., 8150.]])
+                               [6800., 7000.], [7160., 7180.], [7500., 7800.], [8050., 8150.],
+                               [9086.90, 9426.95], [9666.24, 10579.34], [13098.23, 14609.57]])
 
         tmp_all = np.array([np.repeat(False, len(wave))]).flatten()
         for jj in range(len(window_all)):
@@ -771,8 +773,8 @@ class QSOFit():
 
         # Perform one iteration to remove 3sigma pixel below the first continuum fit
         # to avoid the continuum windows falls within a BAL trough
-        if self.rej_abs == True:
-            if self.poly == True:
+        if self.rej_abs:
+            if self.poly:
                 tmp_conti = conti_fit.params[6] * (wave[tmp_all] / 3000.0) ** conti_fit.params[7] + f_poly_conti(
                     wave[tmp_all], conti_fit.params[11:])
             else:
@@ -788,7 +790,7 @@ class QSOFit():
         L = self._L_conti(wave, conti_fit.params)
 
         # calculate MC err
-        if self.MC == True and self.n_trails > 0:
+        if self.MC and self.n_trails > 0:
             conti_para_std, all_L_std = self._conti_mc(self.wave[tmp_all], self.flux[tmp_all], self.err[tmp_all], pp0,
                                                        conti_fit.parinfo, self.n_trails)
 
@@ -871,21 +873,21 @@ class QSOFit():
         f_conti_BC = balmer_conti(xval, pp[8:11])  # Balmer continuum
         f_poly = f_poly_conti(xval, pp[11:])  # polynormal conponent for reddened spectra
 
-        if self.Fe_uv_op == True and self.poly == False and self.BC == False:
+        if self.Fe_uv_op and self.poly == False and self.BC == False:
             yval = f_pl + f_Fe_MgII + f_Fe_Balmer
-        elif self.Fe_uv_op == True and self.poly == True and self.BC == False:
+        elif self.Fe_uv_op and self.poly and self.BC == False:
             yval = f_pl + f_Fe_MgII + f_Fe_Balmer + f_poly
-        elif self.Fe_uv_op == True and self.poly == False and self.BC == True:
+        elif self.Fe_uv_op and self.poly == False and self.BC:
             yval = f_pl + f_Fe_MgII + f_Fe_Balmer + f_conti_BC
-        elif self.Fe_uv_op == False and self.poly == True and self.BC == False:
+        elif self.Fe_uv_op == False and self.poly and self.BC == False:
             yval = f_pl + f_poly
         elif self.Fe_uv_op == False and self.poly == False and self.BC == False:
             yval = f_pl
-        elif self.Fe_uv_op == False and self.poly == False and self.BC == True:
+        elif self.Fe_uv_op == False and self.poly == False and self.BC:
             yval = f_pl + f_conti_BC
-        elif self.Fe_uv_op == True and self.poly == True and self.BC == True:
+        elif self.Fe_uv_op and self.poly and self.BC:
             yval = f_pl + f_Fe_MgII + f_Fe_Balmer + f_poly + f_conti_BC
-        elif self.Fe_uv_op == False and self.poly == True and self.BC == True:
+        elif self.Fe_uv_op == False and self.poly and self.BC:
             yval = f_pl + f_Fe_Balmer + f_poly + f_conti_BC
         else:
             raise RuntimeError('No this option for Fe_uv_op, poly and BC!')
@@ -968,16 +970,15 @@ class QSOFit():
 
                 if np.sum(ind_n) > 10:
                     # call kmpfit for lines
-
                     line_fit = self._do_line_kmpfit(linelist, line_flux, ind_line, ind_n, nline_fit, ngauss_fit)
                     # plt.figure()
                     # plt.plot(np.log(wave[ind_n]), line_flux[ind_n])
                     # plt.plot(np.log(wave[ind_n]), manygauss(np.log(wave[ind_n]), line_fit.params))
                     # calculate MC err
-                    if self.MC == True and self.n_trails > 0:
+                    if self.MC and self.n_trails > 0:
                         all_para_std, fwhm_std, skew_std, sigma_std, ew_std, peak_std, area_std = \
                             self._line_mc(np.log(wave[ind_n]), line_flux[ind_n], err[ind_n], self.line_fit_ini,
-                                          self.line_fit_par, self.n_trails, compcenter)
+                                          self.line_fit_par, self.n_trails, compcenter, ind_line)
 
                     # ----------------------get line fitting results----------------------
                     # complex parameters
@@ -997,7 +998,7 @@ class QSOFit():
 
                     for gg in range(len(line_fit.params)):
                         gauss_tmp = np.concatenate([gauss_tmp, np.array([line_fit.params[gg]])])
-                        if self.MC == True:
+                        if self.MC:
                             gauss_tmp = np.concatenate([gauss_tmp, np.array([all_para_std[gg]])])
                     gauss_result = np.concatenate([gauss_result, gauss_tmp])
 
@@ -1005,7 +1006,7 @@ class QSOFit():
                     for n in range(nline_fit):
                         for nn in range(int(ngauss_fit[n])):
                             line_name = linelist['linename'][ind_line][n] + '_' + str(nn + 1)
-                            if self.MC == True and self.n_trails > 0:
+                            if self.MC and self.n_trails > 0:
                                 gauss_name_tmp_tmp = [line_name + '_scale', line_name + '_scale_err',
                                                       line_name + '_centerwave',
                                                       line_name + '_centerwave_err', line_name + '_sigma',
@@ -1023,7 +1024,7 @@ class QSOFit():
                     fwhm, sigma, skew, ew, peak, area = self.line_prop(compcenter, line_fit.params, 'broad')
                     br_name = uniq_linecomp_sort[ii]
 
-                    if self.MC == True:
+                    if self.MC:
                         fur_result_tmp = np.array(
                             [fwhm, fwhm_std, sigma, sigma_std, ew, ew_std, peak, peak_std, area, area_std])
                         fur_result_name_tmp = np.array(
@@ -1062,34 +1063,83 @@ class QSOFit():
     def _do_line_kmpfit(self, linelist, line_flux, ind_line, ind_n, nline_fit, ngauss_fit):
         """The key function to do the line fit with kmpfit"""
         line_fit = kmpfit.Fitter(self._residuals_line, data=(
-            np.log(self.wave[ind_n]), line_flux[ind_n], self.err[ind_n]))  # fitting wavelength in ln space
+            np.log(self.wave[ind_n]), line_flux[ind_n], self.err[ind_n], ind_line))  # fitting wavelength in ln space
         line_fit_ini = np.array([])
         line_fit_par = np.array([])
+        self.f_ratio = np.zeros_like(self.linelist['linename'])
         for n in range(nline_fit):
             for nn in range(ngauss_fit[n]):
                 # set up initial parameter guess
-                line_fit_ini0 = [0., np.log(linelist['lambda'][ind_line][n]), linelist['inisig'][ind_line][n],
-                                 linelist['iniskw'][ind_line][n]]
+                if '[' in linelist['sigval'][ind_line][n]:
+                    ini_sig = linelist['sigval'][ind_line][n].strip('[').strip(']')
+                    if ',' in ini_sig:
+                        sig_down, sig_up = np.sort([float(ini_sig.split(',')[0]), float(ini_sig.split(',')[1])])
+                        ini_sig = np.mean([sig_down, sig_up])
+                    else:
+                        ini_sig = float(ini_sig)
+                        sig_down, sig_up = np.sort([ini_sig * 1.001, ini_sig * 0.999])
+                elif '*' in linelist['sigval'][ind_line][n]:
+                    ini_sig = 0.0018
+                    sig_up = 0.002
+                    sig_down = 0.001
+                else:
+                    ini_sig = float(linelist['sigval'][ind_line][n])
+                    if ini_sig > 0.0017:
+                        sig_up = 0.02
+                        sig_down = 0.0017
+                    else:
+                        sig_up = 0.0017
+                        sig_down = 2.3e-4
+
+                if '[' in linelist['iniskw'][ind_line][n]:
+                    ini_skw = linelist['iniskw'][ind_line][n].strip('[').strip(']')
+                    if ',' in ini_skw:
+                        skw_down, skw_up = np.sort([float(ini_skw.split(',')[0]), float(ini_skw.split(',')[1])])
+                        ini_skw = np.mean([skw_down, skw_up])
+                    else:
+                        ini_skw = float(ini_skw)
+                        skw_down, skw_up = np.sort([ini_skw * 1.001, ini_skw * 0.999])
+                else:
+                    ini_skw = float(linelist['iniskw'][ind_line][n])
+                    if ini_sig > 0.0017:
+                        skw_up = 1000
+                        skw_down = -1000
+                    else:
+                        skw_up = 0.1
+                        skw_down = -0.1
+
+                if '[' in linelist['fvalue'][ind_line][n]:
+                    ini_flx = linelist['fvalue'][ind_line][n].strip('[').strip(']')
+
+                    if ',' in ini_flx:
+                        sc_down, sc_up = np.sort([float(ini_flx.split(',')[0]), float(ini_flx.split(',')[1])])
+                        ini_flx = np.mean([sc_down, sc_up])
+                    else:
+                        ini_flx = float(ini_flx)
+                        sc_down, sc_up = np.sort([ini_flx * 1.001, ini_flx * 0.999])
+                elif '*' in linelist['fvalue'][ind_line][n]:
+                    ini_flx = 1
+                    sc_up = 10
+                    sc_down = 0.001
+                else:
+                    if float(linelist['fvalue'][ind_line][n]) >= 0:
+                        ini_flx = float(linelist['fvalue'][ind_line][n])
+                        sc_up = 10 ** 10
+                        sc_down = ini_flx * 0.9
+                    else:
+                        ini_flx = float(linelist['fvalue'][ind_line][n])
+                        sc_up = ini_flx * 0.9
+                        sc_down = -10 ** 10
+
+                line_fit_ini0 = [ini_flx, np.log(linelist['lambda'][ind_line][n]), ini_sig,
+                                 ini_skw]
                 line_fit_ini = np.concatenate([line_fit_ini, line_fit_ini0])
                 # set up parameter limits
                 lambda_low = np.log(linelist['lambda'][ind_line][n]) - linelist['voff'][ind_line][n]
                 lambda_up = np.log(linelist['lambda'][ind_line][n]) + linelist['voff'][ind_line][n]
-                sig_low = linelist['minsig'][ind_line][n]
-                sig_up = linelist['maxsig'][ind_line][n]
-                if linelist['inisig'][ind_line][n] > 0.0017:
-                    skw_up = 1000
-                    skw_down = -1000
-                else:
-                    skw_up = 0.1
-                    skw_down = -0.1
-                if linelist['fvalue'][ind_line][n] >= 0:
-                    sc_up = 10 ** 10
-                    sc_down = 0
-                else:
-                    sc_up = 0
-                    sc_down = -10 ** 10
+
                 line_fit_par0 = [{'limits': (sc_down, sc_up)}, {'limits': (lambda_low, lambda_up)},
-                                 {'limits': (sig_low, sig_up)}, {'limits': (skw_down, skw_up)}]
+                                 {'limits': (sig_down, sig_up)}, {'limits': (skw_down, skw_up)}]
                 line_fit_par = np.concatenate([line_fit_par, line_fit_par0])
 
         line_fit.parinfo = line_fit_par
@@ -1101,7 +1151,7 @@ class QSOFit():
         return line_fit
 
     # ---------MC error for emission line parameters-------------------
-    def _line_mc(self, x, y, err, pp0, pp_limits, n_trails, compcenter):
+    def _line_mc(self, x, y, err, pp0, pp_limits, n_trails, compcenter, ind_line):
         """calculate the Monte Carlo errror of line parameters"""
         all_para_1comp = np.zeros(len(pp0) * n_trails).reshape(len(pp0), n_trails)
         all_para_std = np.zeros(len(pp0))
@@ -1114,7 +1164,7 @@ class QSOFit():
 
         for tra in range(n_trails):
             flux = y + np.random.randn(len(y)) * err
-            line_fit = kmpfit.Fitter(residuals=self._residuals_line, data=(x, flux, err), maxiter=50)
+            line_fit = kmpfit.Fitter(residuals=self._residuals_line, data=(x, flux, err, ind_line), maxiter=50)
             line_fit.parinfo = pp_limits
             line_fit.fit(params0=pp0)
             all_para_1comp[:, tra] = line_fit.params
@@ -1177,19 +1227,21 @@ class QSOFit():
             ff = interpolate.interp1d(np.log(self.wave), self.PL_poly_BC, bounds_error=False, fill_value=0)
             contiflux = ff(xx)
 
-            # find the line peak location
-            ypeak = yy.max()
-            ypeak_ind = np.argmax(yy)
-            peak = np.exp(xx[ypeak_ind])
-
             # find the FWHM in km/s
             # take the broad line we focus and ignore other broad components such as [OIII], HeII
 
             if n_gauss > 3:
-                spline = interpolate.UnivariateSpline(xx, manygauss(xx, pp[0:16]) - np.max(manygauss(xx, pp[0:16])) / 2,
-                                                      s=0)
+                if np.max(manygauss(xx, pp[0:16])) > 0:
+                    spline = interpolate.UnivariateSpline(xx, manygauss(xx, pp[0:16]) -
+                                                          np.max(manygauss(xx, pp[0:16])) / 2, s=0)
+                else:
+                    spline = interpolate.UnivariateSpline(xx, manygauss(xx, pp[0:16]) -
+                                                          np.min(manygauss(xx, pp[0:16])) / 2, s=0)
             else:
-                spline = interpolate.UnivariateSpline(xx, yy - np.max(yy) / 2, s=0)
+                if np.max(yy) > 0:
+                    spline = interpolate.UnivariateSpline(xx, yy - np.max(yy) / 2, s=0)
+                else:
+                    spline = interpolate.UnivariateSpline(xx, yy - np.min(yy) / 2, s=0)
             if len(spline.roots()) > 0:
                 fwhm_left, fwhm_right = spline.roots().min(), spline.roots().max()
                 fwhm = abs(np.exp(fwhm_left) - np.exp(fwhm_right)) / compcenter * c
@@ -1213,17 +1265,41 @@ class QSOFit():
                 sigma = np.sqrt(lambda2 / lambda0 - (lambda1 / lambda0) ** 2) / compcenter * c
             else:
                 fwhm, sigma, skew, ew, peak, area = 0., 0., 0., 0., 0., 0.
+                # find the line peak location
+
+            if area > 0:
+                ypeak = yy.max()
+                ypeak_ind = np.argmax(yy)
+                peak = np.exp(xx[ypeak_ind])
+            else:
+                ypeak = yy.min()
+                ypeak_ind = np.argmin(yy)
+                peak = np.exp(xx[ypeak_ind])
 
         return fwhm, sigma, skew, ew, peak, area
 
     def _residuals_line(self, pp, data):
         "The line residual function used in kmpfit"
-        xval, yval, weight = data
+        xval, yval, weight, ind_line = data
+
+        for xind, xflx in enumerate(self.linelist['fvalue'][ind_line]):
+            if '*' in xflx:
+                ini_flx = xflx.split('*')
+                ind_tie = np.where(self.linelist['linename'][ind_line] == ini_flx[0])[0]
+                pp[4 * xind] = pp[4 * ind_tie] * float(ini_flx[1])
+
+        for xind, xsig in enumerate(self.linelist['sigval'][ind_line]):
+            if '*' in xsig:
+                ini_sig = xsig.split('*')
+                ind_tie = np.where(self.linelist['linename'][ind_line] == ini_sig[0])[0]
+                pp[4 * xind + 2] = pp[4 * ind_tie + 2] * float(ini_sig[1])
+
+                vrat = np.log(self.linelist['lambda'][ind_line][ind_tie])
+                vio = np.log(self.linelist['lambda'][ind_line][xind])
+                pp[4 * xind + 1] = pp[4 * ind_tie + 1] / vrat * vio
 
         # restore parameters
         self.newpp = pp.copy()
-        # print('new', pp)
-        # print()
         return (yval - manygauss(xval, pp)) / weight
 
     def _SaveResult(self, conti_result, conti_result_name, line_result, line_result_name, save_fits_path,
@@ -1257,7 +1333,7 @@ class QSOFit():
 
         plt.plot(self.wave_prereduced, self.flux_prereduced, 'k', label='data')
 
-        if decomposition_host == True and self.decomposed == True:
+        if decomposition_host and self.decomposed:
             plt.plot(wave, self.qso + self.host, 'pink', label='host+qso temp')
             plt.plot(wave, flux, 'grey', label='data-host')
             plt.plot(wave, self.host, 'purple', label='host')
@@ -1267,11 +1343,11 @@ class QSOFit():
         plt.scatter(wave[tmp_all], np.repeat(self.flux_prereduced.max() * 1.05, len(wave[tmp_all])), color='grey',
                     marker='o', alpha=0.5)  # plot continuum region
 
-        if linefit == True:
-            if self.MC == True:
+        if linefit:
+            if self.MC:
 
                 for p in range(int(len(gauss_result) / 8)):
-                    if self.CalFWHM(gauss_result[2 + p * 8], gauss_result[4 + p * 8]) < 1200.:
+                    if self.CalFWHM(gauss_result[4 + p * 8]) < 1200.:
                         color = 'g'
                     else:
                         color = 'r'
@@ -1281,7 +1357,7 @@ class QSOFit():
             else:
 
                 for p in range(int(len(gauss_result) / 4)):
-                    if self.CalFWHM(gauss_result[4 * p + 1], gauss_result[4 * p + 2]) < 1200.:
+                    if self.CalFWHM(gauss_result[4 * p + 2]) < 1200.:
                         color = 'g'
                     else:
                         color = 'r'
@@ -1291,7 +1367,7 @@ class QSOFit():
         plt.plot([0, 0], [0, 0], 'r', label='line br')
         plt.plot([0, 0], [0, 0], 'g', label='line na')
         plt.plot(wave, f_conti_model, 'c', lw=2, label='FeII')
-        if self.BC == True:
+        if self.BC:
             plt.plot(wave, self.f_pl_model + self.f_poly_model + self.f_bc_model, 'y', lw=2, label='BC')
         plt.plot(wave, conti_fit.params[6] * (wave / 3000.0) ** conti_fit.params[7] + f_poly_conti(wave,
                                                                                                    conti_fit.params[
@@ -1301,11 +1377,11 @@ class QSOFit():
             self.host = self.flux_prereduced.min()
         plt.ylim(min(self.host.min(), flux.min()) * 0.9, self.flux_prereduced.max() * 1.1)
 
-        if self.plot_legend == True:
+        if self.plot_legend:
             plt.legend(loc='best', frameon=False, fontsize=10)
 
         # plot line name--------
-        if self.plot_line_name == True:
+        if self.plot_line_name:
             line_cen = np.array([6564.60, 6549.85, 6585.27, 6718.29, 6732.66, 4862.68, 5008.24, 4687.02, \
                                  4341.68, 3934.78, 3728.47, 3426.84, 2798.75, 1908.72, 1816.97, \
                                  1750.26, 1718.55, 1549.06, 1640.42, 1402.06, 1396.76, 1335.30, \
@@ -1325,7 +1401,7 @@ class QSOFit():
 
         plt.xlim(wave.min(), wave.max())
 
-        if linefit == True:
+        if linefit:
             # plot subplot from 2 to N
             for c in range(self.ncomp):
                 if self.ncomp == 4:
@@ -1338,9 +1414,9 @@ class QSOFit():
                     axn = plt.subplot(2, 12, (13, 24))
                 plt.plot(wave, self.line_flux, 'k')
 
-                if self.MC == True:
+                if self.MC:
                     for p in range(int(len(gauss_result) / 8)):
-                        if self.CalFWHM(gauss_result[2 + p * 8], gauss_result[4 + p * 8]) < 1200.:
+                        if self.CalFWHM(gauss_result[4 + p * 8]) < 1200.:
                             color = 'g'
                         else:
                             color = 'r'
@@ -1348,7 +1424,7 @@ class QSOFit():
                     plt.plot(wave, manygauss(np.log(wave), gauss_result[::2]), 'b')
                 else:
                     for p in range(int(len(gauss_result) / 4)):
-                        if self.CalFWHM(gauss_result[4 * p + 1], gauss_result[4 * p + 2]) < 1200.:
+                        if self.CalFWHM(gauss_result[4 * p + 2]) < 1200.:
                             color = 'g'
                         else:
                             color = 'r'
@@ -1365,7 +1441,7 @@ class QSOFit():
                      all_comp_range[2 * c + 1]])
                 plt.text(0.02, 0.9, uniq_linecomp_sort[c], fontsize=20, transform=axn.transAxes)
 
-        if linefit == True:
+        if linefit:
             plt.text(0.4, -1.4, r'$\rm Rest \, Wavelength$ ($\rm \AA$)', fontsize=20, transform=ax.transAxes)
             plt.text(-0.1, 0.5, r'$\rm f_{\lambda}$ ($\rm 10^{-17} erg\;s^{-1}\;cm^{-2}\;\AA^{-1}$)', fontsize=20,
                      transform=ax.transAxes, rotation=90)
@@ -1373,12 +1449,12 @@ class QSOFit():
             plt.xlabel(r'$\rm Rest \, Wavelength$ ($\rm \AA$)', fontsize=20)
             plt.ylabel(r'$\rm f_{\lambda}$ ($\rm 10^{-17} erg\;s^{-1}\;cm^{-2}\;\AA^{-1}$)', fontsize=20)
 
-        if self.save_fig == True:
+        if self.save_fig:
             plt.savefig(save_fig_path + self.sdss_name + '.png')
 
-    def CalFWHM(self, logwave, logsigma):
+    def CalFWHM(self, logsigma):
         """transfer the logFWHM to normal frame"""
-        return (np.exp(logwave + logsigma) - np.exp(logwave)) / np.exp(logwave) * 300000. * 2.35
+        return 2 * np.sqrt(2 * np.log(2)) * (np.exp(logsigma) - 1) * 300000.
 
     def Onegauss(self, xval, pp):
         """The single Gaussian model used to fit the emission lines 
@@ -1397,32 +1473,16 @@ class QSOFit():
             return yval
 
     def line_result_output(self, xname, c, to_print=0):
+        # compute area error from sigma + scale
         line_res_name = ['fwhm', 'sigma', 'skewness', 'EW', 'Peak', 'Area']
         # err_name_1 = ['scale', 'centerwave', 'sigma', 'skewness']
-        # err_name_2 = ['fwhm', 'sigma', 'ew', 'peak', 'area']
-        # err_ask = ['whole_fwhm', 'whole_sigma', 'skewness', 'whole_ew', 'whole_peak', 'whole_area']
         xname_id = []
         xerr_id_1 = []
-        xerr_id_2 = []
         for i in range(0, len(self.line_result_name)):
             if xname in self.line_result_name[i] and 'err' not in self.line_result_name[i]:
                 xname_id.append(i)
             if xname in self.line_result_name[i] and 'err' in self.line_result_name[i]:
                 xerr_id_1.append(i)
-            if xname.split('_')[0] in self.line_result_name[i] and 'err' in self.line_result_name[i]:
-                if 'whole' in self.line_result_name[i]:
-                    xerr_id_2.append(i)
-        xname_id = np.asarray(xname_id)
-
-        if len(xerr_id_1) != 0 and len(xerr_id_2) != 0 and c == 'broad':
-            xerr_id = np.asarray([xerr_id_2[0], xerr_id_2[1], xerr_id_1[3], xerr_id_2[2], xerr_id_2[3], xerr_id_2[4]])
-            xerr_val = np.asarray(self.line_result[xerr_id], dtype='float')
-        elif len(xerr_id_1) != 0 and len(xerr_id_2) != 0 and c == 'narrow':
-            xerr_id = np.asarray([xerr_id_2[0], xerr_id_1[2], xerr_id_1[3], xerr_id_2[2], xerr_id_1[1], xerr_id_2[4]])
-            xerr_val = np.asarray(self.line_result[xerr_id], dtype='float')
-            xerr_val = np.asarray([0, xerr_val[1], xerr_val[2], 0, xerr_val[4], 0])
-        else:
-            xerr_val = np.zeros_like(line_res_name)
 
         xval_id = 0
         for i in range(0, len(self.linelist)):
@@ -1430,12 +1490,36 @@ class QSOFit():
                 xval_id = i
 
         xres = self.line_prop(self.linelist[xval_id][0], self.line_result[xname_id], c)
+
+        scl = float(self.line_result[xname_id[0]])
+        if self.conti_result[15] != 0:
+            perr_conti = self.conti_result[16] / self.conti_result[15]
+        else:
+            perr_conti = 0
+
+        if self.MC:
+            xerr_peak = xres[4] * float(self.line_result[xerr_id_1[1]])
+            xerr_sig = float(self.line_result[xerr_id_1[2]])
+            xerr_fwhm = xres[0] * xerr_sig
+            xerr_skw = float(self.line_result[xerr_id_1[3]])
+            xerr_scl = float(self.line_result[xerr_id_1[0]])
+            xerr_area = xres[5] * np.sqrt((xerr_scl/scl) ** 2 + (xerr_fwhm/xres[0]) ** 2)
+            xerr_ew = xres[3] * np.sqrt(perr_conti ** 2 + (xerr_area/xres[5]) ** 2)
+
+            xerr_val = [xerr_fwhm, xerr_sig, xerr_skw, xerr_ew, xerr_peak, xerr_area]
+
+        else:
+            xerr_val = np.zeros_like(xres)
+
         if to_print == 1:
+            print('----------------------------------------------')
+            print(xname + ' data')
             for k in range(0, len(line_res_name)):
-                print((line_res_name[k] + '               ')[:15] + ':', '\t', np.round(xres[k], 3))
-                print((line_res_name[k] + '_err           ')[:15] + ':', '\t', np.round(xerr_val[k], 3))
+                print((line_res_name[k] + '               ')[:15] + ':', '\t', np.round(xres[k], 5))
+                if self.MC:
+                    print((line_res_name[k] + '_err           ')[:15] + ':', '\t', np.round(xerr_val[k], 5))
         return np.asarray([xres, xerr_val])
 
 # Add CIV abs optional in continuum removal
-# Add err functionality in line_result_output
+# Change abs output for min = peak
 # Add Fe emission scaling output functionality
