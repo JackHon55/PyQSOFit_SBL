@@ -11,8 +11,13 @@ The code takes an input spectrum (observed-frame wavelength, flux density and er
 The code uses an input line-fitting parameter list to specify the fitting range and parameter constraints of the individual emission line components. An example of such a file is provided in the example.ipynb. Within the code, the user can switch on/off components to fit to the pseudo-continuum. For example, for some objects the UV/optical Fe II emission cannot be well constrained and the user may want to exclude this component in the continuum fit. The code is highly flexible and can be modified to meet the specific needs of the user.
 
 Main changes in SBL:
-- Tie_lines functionality has been removed. The line fit algorithm with tie lines is not needed for our group's purposes
 - 1 more parameter for Gaussians was added to allow of skewness
+- Input fitting parameters uses more strings than float values. The strings are in '1234', '[1234]', '[1234, 5678]', or 'Line*12' format
+- sigma, skew, scale of the initial parameters uses these strings.
+- '1234' means this is the initial guess, the lower limit is >0 and upper limit is infinite. Use this to explore the fitting space
+- '[1234]' means the initial guess is close to the final value. Use this is you don't want the value to vary too much
+- '[1234, 5678]' provides the minimum and maximum values, the initial guess is taken as the mean of the two.
+- 'Line*12' means copy this parameter value from the specified line and multiply by a specific value. For example OIII4959 can be tie to OIII5007 by 'OIII5007*0.5'
 - Negative flux scale is allowed for absorption lines
 
 
