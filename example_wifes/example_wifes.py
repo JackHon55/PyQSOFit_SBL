@@ -1,45 +1,36 @@
 import glob, os, sys, timeit
 from PyQSO.rebin_spec import rebin_spec
 import matplotlib
-from PyQSO.PyQSOFit_SBL import *
+from PyQSOFit_SBL.PyQSOFit_SBL import *
 import matplotlib.pyplot as plt
 import warnings
 
+
 warnings.filterwarnings("ignore")
 
-newdata = np.rec.array([(6564.61, 'Ha', 6400., 6800., 'Ha_br', 1, 5e-3, 0.004, 0.05, 0.015, 0, 0.05),
-                        # (6564.61, 'Ha', 6400., 6800., 'Ha_con', 1, 1e-2, 0.008, 0.05, 0.015, 0, 0.05),
-                        (6564.61, 'Ha', 6400., 6800., 'Ha_na', 1, 0.5e-3, 2.3e-4, 0.0009, 0.01, 0, 0.002),
-                        (6549.85, 'Ha', 6400., 6800., 'NII6549', 1, 0.5e-3, 2.3e-4, 0.0009, 5e-3, 0, 0.001),
-                        (6585.28, 'Ha', 6400., 6800., 'NII6585', 1, 0.5e-3, 2.3e-4, 0.0009, 5e-3, 0, 0.003),
-                        (6718.29, 'Ha', 6400., 6800., 'SII6718', 1, 0.5e-3, 2.3e-4, 0.0009, 5e-3, 0, 0.001),
-                        (6732.67, 'Ha', 6400., 6800., 'SII6732', 1, 0.5e-3, 2.3e-4, 0.0009, 5e-3, 0, 0.001),
+newdata = np.rec.array([(6564.61, 'Ha', 6400., 6800., 'Ha_br', 1, '[0.004, 0.05]', 0.01, '[-10, 10]', '0.05'),
+                        (6564.61, 'Ha', 6400., 6800., 'Ha_na', 1, '[2.3e-4, 0.001]', 0.01, '0', '0.002'),
+                        (6549.85, 'Ha', 6400., 6800., 'NII6549', 1, 'NII6585*1', 5e-3, '0', 'NII6585*0.33'),
+                        (6585.28, 'Ha', 6400., 6800., 'NII6585', 1, '[2.3e-4, 0.0009]', 5e-3, '0', '0.003'),
+                        (6718.29, 'Ha', 6400., 6800., 'SII6718', 1, 'SII6732*1', 5e-3, '0', 'SII6732*1'),
+                        (6732.67, 'Ha', 6400., 6800., 'SII6732', 1, '[2.3e-4, 0.0009]', 5e-3, '0', '0.001'),
 
-                        # (4862.68, 'Hb', 4640., 5100., 'Hb_br', 1, 5e-3, 0.004, 0.05, 0.01, 0, 0.01),
-                        (4862.68, 'Hb', 4640., 5100., 'Hb_br', 1, 5e-3, 0.004, 0.01, 0.01, 0, 0.01),
-                        (4862.68, 'Hb', 4640., 5100., 'Hb_na', 1, 0.5e-3, 2.3e-4, 0.0017, 0.01, 0, 0.002),
-                        # (4900.68, 'Hb', 4640., 5100., 'spike', 1, 0.5e-3, 2.3e-4, 0.0007, 0.01, 0, -0.02),
-                        # (4894.00, 'Hb', 4640., 5100., 'spika', 1, 0.5e-3, 2.3e-4, 0.0007, 0.01, 0, 0.02),
-                        (4960.30, 'Hb', 4640., 5100., 'OIII4959c', 1, 0.5e-3, 2.3e-4, 0.0017, 0.01, 0, 0.002),
-                        # (4960.30, 'Hb', 4640., 5100., 'OIII4959d', 1, 2e-3, 0.001, 0.005, 0.01, 0, 0.002),
-                        (5008.24, 'Hb', 4640., 5100., 'OIII5007c', 1, 0.5e-3, 2.3e-4, 0.0017, 0.01, 0, 0.004),
-                        # (5008.24, 'Hb', 4640., 5100., 'OIII5007d', 1, 2e-3, 0.001, 0.005, 0.01, 0, 0.004),
-                        # (4687.02, 'Hb', 4640., 5100., 'HeII4687_br', 1, 5e-3, 0.004, 0.01, 0.005, 0, 0.001),
-                        # (4687.02, 'Hb', 4640., 5100., 'HeII4687_na', 1, 1e-3, 2.3e-4, 0.0017, 0.005, 0, 0.001),
+                        (4862.68, 'Hb', 4640., 5100., 'Hb_br', 1, '[0.002, 0.005]', 0.01, '[-10, 10]', '0.01'),
+                        (4862.68, 'Hb', 4640., 5100., 'Hb_na', 1, '[2.3e-4, 0.001]', 0.01, '0', '0.002'),
+                        (4960.30, 'Hb', 4640., 5100., 'OIII4959c', 1, 'OIII5007c*1', 0.01, '0', 'OIII5007c*0.5'),
+                        (5008.24, 'Hb', 4640., 5100., 'OIII5007c', 1, '[1e-5, 0.001]', 0.01, '0', '0.003'),
                         ],
-                       formats='float32,a20,float32,float32,a20,float32,float32,float32,float32,'
-                               'float32,float32,float32,',
-                       names='lambda,compname,minwav,maxwav,linename,ngauss,inisig,minsig,'
-                             'maxsig,voff,iniskw,fvalue')
+                       formats='float32,a20,float32,float32,a20,float32,a20,'
+                               'float32,a20,a20,',
+                       names='lambda,compname,minwav,maxwav,linename,ngauss,sigval,'
+                             'voff,iniskw,fvalue')
 # ------header-----------------
 hdr = fits.Header()
 hdr['lambda'] = 'Vacuum Wavelength in Ang'
 hdr['minwav'] = 'Lower complex fitting wavelength range'
 hdr['maxwav'] = 'Upper complex fitting wavelength range'
-hdr['ngauss'] = 'Number of Gaussians for the line'
-hdr['inisig'] = 'Initial guess of linesigma [in lnlambda]'
-hdr['minsig'] = 'Lower range of line sigma [lnlambda]'
-hdr['maxsig'] = 'Upper range of line sigma [lnlambda]'
+hdr['ngauss'] = 'Number of Gaussians for the line. Not all functions supported for >1'
+hdr['sigval'] = 'Sigma information in strings, either a single value, [min, max], or name of line to tie to'
 hdr['voff  '] = 'Limits on velocity offset from the central wavelength [lnlambda]'
 hdr['iniskw'] = 'Initial guess of lineskew'
 hdr['fvalue'] = 'Relative scale factor for entries w/ same findex'
@@ -52,7 +43,7 @@ path2 = path + '/J1949137'  # path of fitting results
 path3 = path + '/J1949137'  # path of figure
 
 hdu.writeto(path1 + 'qsopar2.fits', overwrite=True)
-'''
+
 # Load in your spectrum however you like, define the redshift, wavelength and flux
 # Note that this code runs for SDSS so flux has to be in 1e-17.
 # This means for some spectrum you need to scale it by * 1e17.
@@ -84,4 +75,3 @@ q.Fit(name=None, nsmooth=1, and_or_mask=False, deredden=False, reject_badpix=Fal
 
 end = timeit.default_timer()
 print('Fitting finished in : ' + str(np.round(end - start)) + 's')
-'''
