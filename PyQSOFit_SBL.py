@@ -1492,8 +1492,8 @@ class QSOFit:
         xres = self.line_prop(self.linelist[xval_id][0], self.line_result[xname_id], c)
 
         scl = float(self.line_result[xname_id[0]])
-        if self.conti_result[15] != 0:
-            perr_conti = self.conti_result[16] / self.conti_result[15]
+        if self.conti_result[11] != 0:
+            perr_conti = self.conti_result[12] / self.conti_result[11]
         else:
             perr_conti = 0
 
