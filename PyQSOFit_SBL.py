@@ -580,8 +580,8 @@ class QSOFit:
     def _RestFrame(self, lam, flux, err, z):
         """Move wavelenth and flux to rest frame"""
         self.wave = lam / (1. + z)
-        self.flux = flux * (1. + z)
-        self.err = err * (1. + z)
+        self.flux = flux
+        self.err = err
         return self.wave, self.flux, self.err
 
     def _OrignialSpec(self, wave, flux, err):
@@ -1216,19 +1216,13 @@ class QSOFit:
                 skw[i] = pp[4 * i + 3]
 
             skew = np.mean(skw)
-            # print cen,sig,area
-            left = min(cen - 3 * sig)
-            right = max(cen + 3 * sig)
-            disp = 1.e-4
-            npix = int((right - left) / disp)
-
-            xx = np.linspace(left, right, npix)
+            disp = np.diff(np.log(self.wave))[0]
+            left = cen - 200 * disp
+            right = cen + 200 * disp
+            xx = np.arange(left, right, disp)
             yy = manygauss(xx, pp)
             ff = interpolate.interp1d(np.log(self.wave), self.PL_poly_BC, bounds_error=False, fill_value=0)
             contiflux = ff(xx)
-
-            # find the FWHM in km/s
-            # take the broad line we focus and ignore other broad components such as [OIII], HeII
 
             if n_gauss > 3:
                 if np.max(manygauss(xx, pp[0:16])) > 0:
@@ -1244,10 +1238,10 @@ class QSOFit:
                     spline = interpolate.UnivariateSpline(xx, yy - np.min(yy) / 2, s=0)
             if len(spline.roots()) > 0:
                 fwhm_left, fwhm_right = spline.roots().min(), spline.roots().max()
-                fwhm = abs(np.exp(fwhm_left) - np.exp(fwhm_right)) / compcenter * c
+                fwhm = abs(np.exp(fwhm_left) - np.exp(fwhm_right)) / np.exp(cen[0]) * c
 
                 # calculate the total broad line flux
-                area = (np.exp(xx) * yy * disp).sum()
+                area = np.trapz(yy, dx=np.diff(self.wave)[0])
 
                 # calculate the line sigma and EW in normal wavelength
                 lambda0 = 0.
