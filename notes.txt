@@ -41,11 +41,10 @@ NII6585d, NII6549d = broad versions
 SIIL, SIIR = the SII doublet. I usually don't fit these because they are absent in most of the spectra. But hopefully these two are straight forward enough.
 
 Test run to make sure everything works:
-1. Run your Jupyter console at the top directory
+1. Run your console at the top directory
 2. Run the Component_definitions.py file
-3. Run the 6dfgs_fitting.py file
+3. Run the Model_fitting.py file
 	- A plot should appear
-	- A .txt file should appear 'fitting_results.txt'
 	- A .png file should appear in /fitting_plots folder
 
 If things fail, you may need to check your packages, python version, and environment paths. I am not too familair with Jupyter to know exactly how this will all work, but we can test things out!

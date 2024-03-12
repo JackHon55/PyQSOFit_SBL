@@ -12,6 +12,7 @@ warnings.filterwarnings("ignore")
 #               Skew definition, Flux definition)
 # see details for individual components in the notes
 newdata = np.rec.array([(4861.33, 'O3', 4500, 6700, 'Hb_na', 1, '[1e-4, 0.001]', 1e-3, '[0]', '0.002'),
+                        (4861.33, 'O3', 4500, 6700, 'Hb_br', 1, '[0.0017, 0.01]', 5e-3, '[-10, 10]', '0.02'),
                         (5006.843, 'O3', 4500, 6700, 'OIII5007c', 1, '[1e-4, 0.0017]', 1e-3, '[0]', '0.003'),
                         (4958.91, 'O3', 4500, 6700, 'OIII4959c', 1, 'OIII5007c*1', 1e-3, '[0]', 'OIII5007c*0.33'),
                         # (4958.91, 'O3', 4500, 6700, 'OIII4959d', 1, 'OIII5007d*1', 1e-3, '[0]', 'OIII5007d*0.33'),
