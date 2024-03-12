@@ -1,0 +1,51 @@
+packages required
+
+python version 3.6
+astropy
+numpy
+scipy
+matplotlib
+tqdm
+pysynphot
+julian
+kapteyn
+PyAstronomy
+extinction
+
+
+
+PyQSOFit converts back and forth between logarithimic and linear scale for wavelengths, so the numbers will appear weird until you are used to it.
+In general:
+- I have narrow lines to be [1e-4, 0.001] and that corresponds to ~100 < FWHM < 705 km/s
+- Velocity offset is typically 1e-3 for narrow lines and 5e-3 for broad, these number i get from trial and error and sometimes I increase it to acheive certain fitting results
+- Narrow lines should have 0 skew, so [0] in skew definition
+- Flux definition values don't matter as much, but you can play around with them. +ive number is emission, -ive numbers are absorption
+
+These are just default values that work in general. Sometimes the max FWHM should go higher.
+
+Hb_na = Hbeta Narrow, ~100 < FWHM < 705 km/s, typical narrow line
+OIII5007c = OIII5007, ~100 < FWHM < 1200 km/s, allowed for broader FWHM as it is common for OIII to be somewhat broad
+OIII4959c = OIII4959, FWHM, velocity offset, and Skew are set to be identical to OIII5007 (this is indicated by writing 'OIII5007c*1' at the FWHM definition). The flux of this line is also set to be 1/3 of OIII5007, as indicated by writing 'OIII5007c*0.33' at flux definition
+
+OIII5007d = OIII5007 but when the line is obvious broaden. 1200 < FWHM < ~3500 km/s 
+OIII4959d = OIII4959 broad version, same connection with OIII5007 as the narrow lines.
+
+spka, spkb = Additional lines set to just be a few pixels to model large noise spikes that can't be masked.
+
+Ha_na = Halpha narrow, By default, this line is connected to Hbeta narrow with FWHM, Velocity offset and skew.
+NII6585c = NII6585, ~100 < FWHM < 705 km/s, typical narrow line
+NII6549c = NII6549, connected to NII6585 with the same FWHM, velocity offset and skew, and flux set to 1/3 of NII6585
+
+NII6585d, NII6549d = broad versions
+
+SIIL, SIIR = the SII doublet. I usually don't fit these because they are absent in most of the spectra. But hopefully these two are straight forward enough.
+
+Test run to make sure everything works:
+1. Run your Jupyter console at the top directory
+2. Run the Component_definitions.py file
+3. Run the 6dfgs_fitting.py file
+	- A plot should appear
+	- A .txt file should appear 'fitting_results.txt'
+	- A .png file should appear in /fitting_plots folder
+
+If things fail, you may need to check your packages, python version, and environment paths. I am not too familair with Jupyter to know exactly how this will all work, but we can test things out!

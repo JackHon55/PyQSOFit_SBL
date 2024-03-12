@@ -1,4 +1,5 @@
 import numpy as np
+
 from pysynphot import observation
 from pysynphot import spectrum
 
