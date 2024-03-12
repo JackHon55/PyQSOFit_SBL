@@ -75,32 +75,38 @@ def bel_fitting(w, f, z, fig_path):
     # Spectra Trimming
     f = f[(w > 4000) & (w < 5500)][:]
     w = w[(w > 4000) & (w < 5500)][:]
+    '''if len(w) == 0:
+        return np.zeros((5, 6))
+    if w[10] > HA or w[-10] < HA:
+        return np.zeros((5, 6))'''
+    # w, f = noise_to_linear([w, f], [5071, 5164])
+    fs = True
+    p1 = [False, 0]
+    # p1 = [True, 1]
+    # f, fs = f - continuum_fitting(w, f, 100), False
+    err = np.ones_like(f)
 
-    # w, f = noise_to_linear([w, f], [6150, 6400]) # Function to mask manually
-    p1 = [False, 0]     # Uncomment this for normal fitting
-    # p1 = [True, 1]    # Uncomment this for error fitting
-    fs = True           # Uncomment this for nomal fitting
-    # f, fs = f - continuum_fitting(w, f, 75), False   # Uncomment this to use the continuum fitting tool for tricky spectra
-    err = np.ones_like(f)   # These spectra files do not have variance provided. The dominant noise is calculated post-fitting inside PyQSOFit anyways
-    # f = medfilt(f, 7)     # Uncomment to apply smoothing to help with visualisation
     q = QSOFit(w, f, err, 0, path=path1)
 
     start = timeit.default_timer()
-    q.Fit(name=None, nsmooth=1, deredden=False, reject_badpix=False, wave_range=None, redshift=False,
-          Fe_uv_op=False, poly=fs, CFT=False, CFT_smooth=75, BC=True, initial_guess=None, MC=p1[0], MC_conti=False, decomposition_host=fs,
-          PL=fs, n_trails=15, linefit=True, save_result=False, plot_fig=True, save_fig=True, plot_line_name=True,
-          plot_legend=True, dustmap_path=None, save_fig_path=fig_path, save_fits_path=None, save_fits_name=None)
-    plt.show()
-    plt.axvline(6885 / (1 + z))     # Indicates B-band telluric line
-    plt.axvline(5577 / (1 + z))     # Indicates the 5577 skyline
+    q.Fit(decomposition_host=fs, PL=fs, poly=fs, Fe_uv_op=True, BC=True,
+          CFT_smooth=75, CFT=False, MC=p1[0], MC_conti=False,
+          name=None, nsmooth=1, deredden=False, reject_badpix=False, wave_range=None, redshift=False,
+          initial_guess=None, n_trails=15, linefit=True, save_result=False, plot_fig=True, save_fig=False,
+          plot_line_name=True, plot_legend=True, dustmap_path=None, save_fig_path=fig_path,
+          save_fits_path=None, save_fits_name=None)
+
+    plt.axvline(6885 / (1 + z))
+    plt.axvline(5577 / (1 + z))
 
     # plt.close()
     end = timeit.default_timer()
-    end_flux = np.abs(q.flux-q.f_conti_model-q.gauss_line)
+    end_flux = np.abs(q.flux - q.f_conti_model - q.gauss_line)
     end_wave = q.wave
     end_flux = end_flux
-    print(np.trapz(end_flux, end_wave)/len(end_flux[end_flux > 1.4826*3*mad(end_flux)]))
+    print(np.trapz(end_flux, end_wave) / len(end_flux[end_flux > 1.4826 * 3 * mad(end_flux)]))
     noise_area = np.trapz(end_flux, end_wave) / len(end_flux[end_flux > 1.4826 * 3 * mad(end_flux)])
+    end = timeit.default_timer()
     print('Fitting finished in : ' + str(np.round(end - start)) + 's')
     '''
     a = 0
@@ -109,33 +115,43 @@ def bel_fitting(w, f, z, fig_path):
         a += 1
     '''
     moe = p1[1]
-    a = q.line_result_output('Hb_na')[moe]
-    b = q.line_result_output('OIII5007')[moe]
-    # a = np.zeroes(6)
-    if w[-1] > HA:
-        c = q.line_result_output('Ha_na')[moe]
-        # d = np.zeros(6)
-        d = q.line_result_output('NII6585c')[moe]
+    block1 = 0
+    block2 = 0
+    if block1 == 2:
+        a = np.zeros(6)
+        b = np.copy(a)
+        c = np.copy(a)
+    else:
+        a = q.line_result_output('Hb_br')[moe]
+        b = q.line_result_output('Hb_na')[moe]
+        # b = np.zeros(6)
+        c = q.line_result_output('OIII5007c')[moe]
+        '''a1 = q.line_result_output('Hb_br1')[0]
+        a2 = q.line_result_output('Hb_br2')[0]
+        print(np.average([a1[4], a2[4]], weights=[a1[-1], a2[-1]]))'''
+
+    if w[-1] > HA and block2 == 0:
+        d = q.line_result_output('Ha_br')[moe]
+        e = q.line_result_output('NII6549c')[moe]
+        # e = np.zeros(6)
+        # f = q.line_result_output('NII6585', 'narrow')[0]
         # g1 = q.line_result_output('SII6718', 'narrow')[0]
         # g2 = q.line_result_output('SII6732', 'narrow')[0]
+        '''a1 = q.line_result_output('Ha_br1')[0]
+        a2 = q.line_result_output('Ha_br2')[0]
+        print(np.average([a1[4], a2[4]], weights=[a1[-1], a2[-1]]))'''
     else:
-        c = np.zeros(6)
-        d = np.copy(c)
+        d = np.zeros(len(a))
+        e = np.copy(d)
 
-    # Want only the fwhm, peak position, and flux (EW calculation is broken, and skew is not relevant)
-    a = np.asarray([a[0], a[2], a[5]])
-    b = np.asarray([b[0], b[2], b[5]])
-    c = np.asarray([c[0], c[2], c[5]])
-    d = np.asarray([d[0], d[2], d[5]])
-
-    return np.concatenate([[noise_area], a, b, c, d])
+    return np.asarray([a, b, c, d, e], dtype='float')
 
 
 file_data = np.genfromtxt(os.getcwd() + '/test_spectra_list.csv', delimiter=',')[1:].T
 
 # Mode A - Fitting selected spectrum
 wid = np.asarray([
-32928
+22878
 ])
 name = np.asarray([file_data[0][id_finder(file_data[0], i)] for i in wid])
 spec_z = np.asarray([file_data[4][id_finder(file_data[0], i)] for i in wid])
