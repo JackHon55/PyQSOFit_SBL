@@ -2,34 +2,36 @@ import os
 import warnings
 import numpy as np
 from astropy.io import fits
+from PyQSOFit.PyQSOFit_SVL import LineDef, Section
 
 warnings.filterwarnings("ignore")
 
-newdata = np.rec.array([(4861.33, 'O3', 4500, 6700, 'Hb_br1', 1, '[0.0017, 0.01]', 5e-3, '[-10, 10]', '0.005'),
-                        # (4861.33, 'O3', 4500, 6700, 'Hb_br2', 1, '[0.0017, 0.01]', 5e-3, '-[-10, 10]', '0.005'),
-                        # (4685.7, 'O3', 4500, 6700, 'HE_br', 1, '[0.0017, 0.01]', 5e-3, '[-10, 10]', '0.005'),
-                        (4861.33, 'O3', 4500, 6700, 'Hb_na', 1, '[1e-5, 0.001]', 1e-3, '[0]', '0.002'),
-                        (5006.843, 'O3', 4500, 6700, 'OIII5007c', 1, '[1e-5, 0.0017]', 1e-3, '[0]', '0.003'),
-                        (4958.91, 'O3', 4500, 6700, 'OIII4959c', 1, 'OIII5007c*1', 1e-3, '[0]', 'OIII5007c*0.33'),
-                        # (4958.91, 'O3', 4500, 6700, 'OIII4959d', 1, 'OIII5007d*1', 1e-3, '[0]', 'OIII5007d*0.33'),
-                        # (5006.843, 'O3', 4500, 6700, 'OIII5007d', 1, '[0.0017, 0.005]', 5e-3, '[0]', '0.005'),
-                        # (4792, 'O3', 4500, 6700, 'spka', 1, '[1e-5, 0.0005]', 1e-3, '0', '0.002'),
-                        # (4944, 'O3', 4500, 6700, 'spka', 1, '[1e-5, 0.0005]', 1e-3, '0', '0.002'),
-                        # (4830, 'O3', 4500, 6700, 'spkb', 1, '[1e-5, 0.0005]', 1e-3, '0', '-0.002'),
+hbo3_section = Section(section_name='O3', start_range=4500, end_range=6700)
+line_hb_br1 = LineDef(l_name='Hb_br1', l_center=4861.33, scale=0.005, default_bel=True)
+line_hb_na = LineDef(l_name='Hb_na', l_center=4861.33, scale=0.002, sig=(1e-5, 0.001), voffset=1e-3, skew=(0,))
 
-                        (6562.82, 'O3', 4500, 6700, 'Ha_br1', 1, 'Hb_br1*1', 5e-3, '[-10, 10]', '0.005'),
-                        # (6562.82, 'O3', 4500, 6700, 'Ha_br2', 1, 'Hb_br2*1', 5e-3, '[-10, 10]', '0.005'),
-                        (6562.82, 'O3', 4500, 6700, 'Ha_na', 1, '[1e-5, 0.001]', 1e-3, '[0]', '0.002'),
-                        (6583.46, 'O3', 4500, 6700, 'NII6585c', 1, '[1e-5, 0.001]', 1e-3, '[0]', '0.002'),
-                        (6548.05, 'O3', 4500, 6700, 'NII6549c', 1, 'NII6585c*1', 1e-3, '[0]', 'NII6585c*0.33'),
-                        # (6716.44, 'O3', 4500, 6700, 'SIIL', 1, 'SIIR*1', 1e-3, '[0]', '0.002'),
-                        # (6730.81, 'O3', 4500, 6700, 'SIIR', 1, '[1e-5, 0.001]', 1e-3, '[0]', '0.002'),
+line_or = LineDef(l_name='OIII5007c', l_center=5006.843, scale=0.003, default_nel=True)
+line_ol = LineDef(l_name='OIII4959c', l_center=4958.91, flux_link='OIII5007c*0.33', profile_link='OIII5007c*1')
 
-                        ],
-                       formats='float32,a20,float32,float32,a20,float32,a20,'
-                               'float32,a20,a20,',
-                       names='lambda,compname,minwav,maxwav,linename,ngauss,sigval,'
-                             'voff,iniskw,fvalue')
+hbo3_section.line_add(line_hb_br1)
+hbo3_section.line_add(line_hb_na)
+hbo3_section.line_add(line_or)
+hbo3_section.line_add(line_ol)
+
+hanl_section = Section(section_name='O3', start_range=4500, end_range=6700)
+line_ha_br1 = LineDef(l_name='Ha_br1', l_center=6562.82, scale=0.005, default_bel=True)
+line_ha_na = LineDef(l_name='Ha_na', l_center=6562.82, scale=0.002, sig=(1e-5, 0.001), voffset=1e-3, skew=(0,))
+
+line_nr = LineDef(l_name='NII6585c', l_center=6583.46, scale=0.002, default_nel=True)
+line_nl = LineDef(l_name='NII6549c', l_center=6548.05, flux_link='NII6585c*0.33', profile_link='NII6585c*1')
+
+hanl_section.line_add(line_ha_br1)
+hanl_section.line_add(line_ha_na)
+hanl_section.line_add(line_nr)
+hanl_section.line_add(line_nl)
+
+newdata = np.concatenate([hbo3_section.lines, hanl_section.lines])
+
 # ------header-----------------
 hdr = fits.Header()
 hdr['lambda'] = 'Vacuum Wavelength in Ang'
