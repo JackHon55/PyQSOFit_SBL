@@ -337,7 +337,7 @@ class LineDef:
                 One value input as (2.3,) will fix the skew of the modelling profile at 2.3.
                 Two values input as (-10, 10) will have the skew range from -10 to 10.
 
-            gamma: float, optional
+            gamma: str, optional
                 A string that controls the Voigt profile for the modelling.
                 By default, it is an empty string and will turn off Voigt profile and use Gaussian profile instead.
 
