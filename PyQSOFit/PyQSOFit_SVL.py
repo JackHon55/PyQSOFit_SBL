@@ -513,8 +513,7 @@ class Section:
 class QSOFit:
 
     def __init__(self, lam, flux, err, z, ra=- 999., dec=-999., ebmv=None, plateid=None, mjd=None, fiberid=None,
-                 path=None,
-                 and_mask=None, or_mask=None):
+                 path=None, and_mask=None, or_mask=None):
         """
         Get the input data perpared for the QSO spectral fitting
 
@@ -561,9 +560,9 @@ class QSOFit:
         self.ebmv = ebmv
         self.c = 299792.458  # km/s
 
-    def Fit(self, name=None, nsmooth=1, and_or_mask=True, reject_badpix=True, deredden=True, wave_range=None,
-            wave_mask=None, empty_mask=None, decomposition_host=True, BC03=False, Mi=None, npca_gal=5, npca_qso=20,
-            Fe_uv_op=True, Fe_in_line=False, Conti_window=True, redshift=True,
+    def Fit(self, name=None, nsmooth=1, and_or_mask=True, reject_badpix=True, deredden=True,
+            decomposition_host=True, BC03=False, Mi=None, npca_gal=5, npca_qso=20,
+            Fe_uv_op=True, Conti_window=True, redshift=True,
             poly=False, PL=True, CFT=False, CFT_smooth=75, BC=False, rej_abs=False, initial_guess=None, MC_conti=False,
             MC=True, n_trails=1, linefit=True,
             save_result=True, plot_fig=True, save_fig=True, plot_line_name=True, plot_legend=True, dustmap_path=None,
@@ -595,14 +594,6 @@ class QSOFit:
         deredden: bool, optional
             correct the Galactic extinction only if the RA and Dec are available. It will return the corrected
             flux with the same array size. Default: True.
-
-        wave_range: 2-element array, optional
-            trim input wavelength (lam) according to the min and max range of the input 2-element array, e.g.,
-            np.array([4000.,6000.]) in Rest frame range. Default: None
-
-        wave_mask: 2-D array
-            mask some absorption lines or skylines in spectrum, e.g., np.array([[2200.,2300.]]),
-            np.array([[5650.,5750.],[5850.,5900.]])
 
         decomposition_host:
             bool, optional If True, the host galaxy-QSO decomposition will be applied. If no more than 100 pixels are
@@ -786,16 +777,13 @@ class QSOFit:
         """
 
         self.name = name
-        self.wave_range = wave_range
-        self.wave_mask = wave_mask
-        self.empty_mask = empty_mask
         self.BC03 = BC03
         self.Mi = Mi
         self.npca_gal = npca_gal
         self.npca_qso = npca_qso
         self.initial_guess = initial_guess
+        self.host_decomposition = decomposition_host
         self.Fe_uv_op = Fe_uv_op
-        self.Fe_in_line = Fe_in_line
         self.Conti_window = Conti_window
         self.poly = poly
         self.CFT = CFT
@@ -838,56 +826,50 @@ class QSOFit:
         else:
             save_fits_name = save_fits_name
 
-        # deal with pixels with error equal 0 or inifity
-        ind_gooderror = np.where((self.err != 0) & ~np.isinf(self.err), True, False)
-        err_good = self.err[ind_gooderror]
-        flux_good = self.flux[ind_gooderror]
-        lam_good = self.lam[ind_gooderror]
+        self._remove_bad_error()
 
-        if (self.and_mask is not None) & (self.or_mask is not None):
-            and_mask_good = self.and_mask[ind_gooderror]
-            or_mask_good = self.or_mask[ind_gooderror]
-            del self.and_mask, self.or_mask
-            self.and_mask = and_mask_good
-            self.or_mask = or_mask_good
-        del self.err, self.flux, self.lam
-        self.err = err_good
-        self.flux = flux_good
-        self.lam = lam_good
-
+        # Apply smoothing if required
         if nsmooth is not None:
             self.flux = smooth(self.flux, nsmooth)
             self.err = smooth(self.err, nsmooth)
-        if and_or_mask and (self.and_mask is not None or self.or_mask is not None):
-            self._MaskSdssAndOr(self.lam, self.flux, self.err, self.and_mask, self.or_mask)
+
+        # Handle SDSS masking operation
+        if and_or_mask:
+            self._MaskSdssAndOr()
+
+        # Reject bad pixels if required
         if reject_badpix:
-            self._RejectBadPix(self.lam, self.flux, self.err)
-        if wave_range is not None:
-            self._WaveTrim(self.lam, self.flux, self.err, self.z)
-        if wave_mask is not None:
-            self._WaveMsk(self.lam, self.flux, self.err, self.z)
-        if deredden and self.ebmv is not None:
+            self._RejectBadPix()
+
+        # Deredden if ebmv given and required
+        if deredden:
             self.flux = self._DeRedden(self.lam, self.flux, self.ebmv)
+
+        # blueshift spectrum if required
         if redshift:
-            self.lam, self.flux, self.err = self._RestFrame(self.lam, self.flux, self.err, self.z)
+            self.wave, self.flux, self.err = self._RestFrame(self.lam, self.flux, self.err, self.z)
         else:
             self.wave = self.lam
+
         self.SN_ratio_conti = self._CalculateSN(self.lam, self.flux)
-        self._OrignialSpec(self.wave, self.flux, self.err)
+        self._OrignialSpec()
+
+        if CFT:
+            self._reset_contipp_cft()
+            self._apply_cft()
 
         # do host decomposition --------------
-        if self.z < 1.16 and decomposition_host:
-            self._DoDecomposition(self.wave, self.path)
+        if self.z < 1.16 and self.host_decomposition:
+            self._DoDecomposition()
         else:
             self.decomposed = False
-            if self.z > 1.16 and decomposition_host:
+            if self.z > 1.16 and self.host_decomposition:
                 print('redshift larger than 1.16 is not allowed for host decomposion!')
 
         # fit continuum --------------------
         if not self.Fe_uv_op and not self.poly and not self.BC:
-            self.line_flux = self.flux
+            self.line_flux = self.flux if self.line_flux is None else self.line_flux
             self.conti_fit = np.zeros_like(self.wave)
-            self.f_conti_model = np.zeros_like(self.wave)
             self.f_bc_model = np.zeros_like(self.wave)
             self.f_fe_uv_model = np.zeros_like(self.wave)
             self.f_fe_op_model = np.zeros_like(self.wave)
@@ -896,6 +878,7 @@ class QSOFit:
             self.PL_poly_BC = np.zeros_like(self.wave)
             self.tmp_all = np.zeros_like(self.wave)
             self.conti_result = np.zeros_like(self.wave)
+            self.f_conti_model = np.zeros_like(self.wave) if self.f_conti_model is None else self.f_conti_model
         else:
             print('Fit Conti')
             self._DoContiFit(self.wave, self.flux, self.err, self.ra, self.dec, self.plateid, self.mjd, self.fiberid)
@@ -904,8 +887,6 @@ class QSOFit:
         print('Fit Line')
         if linefit:
             self._DoLineFit()
-        if Fe_in_line:
-            self._DoFullfit()
         print('Line done')
         # save data -------
         if save_result:
@@ -923,7 +904,18 @@ class QSOFit:
                 self.uniq_linecomp_sort = np.array([])
             self._PlotFig(linefit, save_fig_path)
 
-    def _MaskSdssAndOr(self, lam, flux, err, and_mask, or_mask):
+    def _remove_bad_error(self):
+        """deal with pixels with error equal 0 or inifity"""
+        ind_gooderror = [(self.err != 0) & ~np.isinf(self.err)]
+        self.err = self.err[ind_gooderror]
+        self.flux = self.flux[ind_gooderror]
+        self.lam = self.lam[ind_gooderror]
+
+        if (self.and_mask is not None) & (self.or_mask is not None):
+            self.and_mask = self.and_mask[ind_gooderror]
+            self.or_mask = self.or_mask[ind_gooderror]
+
+    def _MaskSdssAndOr(self):
         """
         Remove SDSS and_mask and or_mask points are not zero
         Parameter:
@@ -938,53 +930,29 @@ class QSOFit:
         ---------
         return the same size array of wavelength, flux, error
         """
-        ind_and_or = np.where((and_mask == 0) & (or_mask == 0), True, False)
-        del self.lam, self.flux, self.err
-        self.lam, self.flux, self.err = lam[ind_and_or], flux[ind_and_or], err[ind_and_or]
+        if self.and_mask is None or self.or_mask is None:
+            return
+        ind_and_or = [(self.and_mask == 0) & (self.or_mask == 0)]
+        self.lam, self.flux, self.err = self.lam[ind_and_or], self.flux[ind_and_or], self.err[ind_and_or]
 
-    def _RejectBadPix(self, lam, flux, err):
+    def _RejectBadPix(self):
         """
         Reject 10 most possiable outliers, input wavelength, flux and error. Return a different size wavelength,
         flux, and error.
         """
         # -----remove bad pixels, but not for high SN spectrum------------
-        ind_bad = pyasl.pointDistGESD(flux, 10)
-        wv = np.asarray([i for j, i in enumerate(lam) if j not in ind_bad[1]], dtype=np.float64)
-        fx = np.asarray([i for j, i in enumerate(flux) if j not in ind_bad[1]], dtype=np.float64)
-        er = np.asarray([i for j, i in enumerate(err) if j not in ind_bad[1]], dtype=np.float64)
+        ind_bad = pyasl.pointDistGESD(self.flux, 10)
+        wv = np.asarray([i for j, i in enumerate(self.lam) if j not in ind_bad[1]], dtype=np.float64)
+        fx = np.asarray([i for j, i in enumerate(self.flux) if j not in ind_bad[1]], dtype=np.float64)
+        er = np.asarray([i for j, i in enumerate(self.err) if j not in ind_bad[1]], dtype=np.float64)
         del self.lam, self.flux, self.err
         self.lam, self.flux, self.err = wv, fx, er
-        return self.lam, self.flux, self.err
-
-    def _WaveTrim(self, lam, flux, err, z):
-        """
-        Trim spectrum with a range in the rest frame.
-        """
-        # trim spectrum e.g., local fit emiision lines
-        ind_trim = np.where((lam / (1. + z) > self.wave_range[0]) & (lam / (1. + z) < self.wave_range[1]), True, False)
-        del self.lam, self.flux, self.err
-        self.lam, self.flux, self.err = lam[ind_trim], flux[ind_trim], err[ind_trim]
-        if len(self.lam) < 100:
-            raise RuntimeError("No enough pixels in the input wave_range!")
-        return self.lam, self.flux, self.err
-
-    def _WaveMsk(self, lam, flux, err, z):
-        """Block the bad pixels or absorption lines in spectrum."""
-
-        for msk in range(len(self.wave_mask)):
-            try:
-                ind_not_mask = ~np.where(
-                    (lam / (1. + z) > self.wave_mask[msk, 0]) & (lam / (1. + z) < self.wave_mask[msk, 1]), True, False)
-            except IndexError:
-                raise RuntimeError("Wave_mask should be 2D array, e.g., np.array([[2000,3000],[3100,4000]]).")
-
-            del self.lam, self.flux, self.err
-            self.lam, self.flux, self.err = lam[ind_not_mask], flux[ind_not_mask], err[ind_not_mask]
-            lam, flux, err = self.lam, self.flux, self.err
-        return self.lam, self.flux, self.err
 
     @staticmethod
     def _DeRedden(lam: np.array, flux: np.array, ebmv: float) -> np.array:
+        if ebmv is None:
+            print('No ebmv value given. No dereddening applied')
+            return flux
         """Correct the Galatical extinction"""
         # m = sfdmap.SFDMap(dustmap_path)
         flux_unred = remove(fitzpatrick99(lam, a_v=ebmv * 3.1, r_v=3.1), flux)
@@ -998,11 +966,11 @@ class QSOFit:
         err = err
         return wave, flux, err
 
-    def _OrignialSpec(self, wave, flux, err):
+    def _OrignialSpec(self):
         """save the orignial spectrum before host galaxy decompsition"""
-        self.wave_prereduced = wave
-        self.flux_prereduced = flux
-        self.err_prereduced = err
+        self.wave_prereduced = self.wave
+        self.flux_prereduced = self.flux
+        self.err_prereduced = self.err
 
     @staticmethod
     def _CalculateSN(wave: np.array, flux: np.array) -> float:
@@ -1021,44 +989,54 @@ class QSOFit:
 
         return SN_ratio_conti
 
-    def _DoDecomposition(self, wave, path):
+    def _reset_contipp_cft(self):
+        self.host_decomposition = False
+        self.poly = False
+        self.BC = False
+        self.Fe_uv_op = False
+        self.PL = False
+
+    def _apply_cft(self):
+        self.f_conti_model = continuum_fitting(self.wave, self.flux, self.CFT_smooth)
+        self.line_flux = self.flux - self.f_conti_model
+
+    def _DoDecomposition(self):
         """Decompose the host galaxy from QSO"""
-        datacube = self._HostDecompose(self.wave, self.flux, self.err, self.z, self.Mi, self.npca_gal, self.npca_qso,
-                                       path)
+        datacube = self._HostDecompose()
 
         # for some negtive host templete, we do not do the decomposition
         if np.sum(np.where(datacube[3, :] < 0., True, False)) > 100:
-            self.host = np.zeros(len(wave))
+            self.host = np.zeros(len(self.wave))
             self.decomposed = False
             print('Get negtive host galaxy flux larger than 100 pixels, decomposition is not applied!')
-        else:
-            self.decomposed = True
-            del self.wave, self.flux, self.err
-            self.wave = datacube[0, :]
-            # block OIII, ha,NII,SII,OII,Ha,Hb,Hr,hdelta
+            return self.wave, self.flux, self.err
 
-            line_mask = np.where((self.wave < 4970.) & (self.wave > 4950.) |
-                                 (self.wave < 5020.) & (self.wave > 5000.) |
-                                 (self.wave < 6590.) & (self.wave > 6540.) |
-                                 (self.wave < 6740.) & (self.wave > 6710.) |
-                                 (self.wave < 3737.) & (self.wave > 3717.) |
-                                 (self.wave < 4872.) & (self.wave > 4852.) |
-                                 (self.wave < 4350.) & (self.wave > 4330.) |
-                                 (self.wave < 4111.) & (self.wave > 4091.), True, False)
+        self.decomposed = True
+        del self.wave, self.flux, self.err
+        self.wave = datacube[0, :]
+        # block OIII, ha,NII,SII,OII,Ha,Hb,Hr,hdelta
 
-            f = interpolate.interp1d(self.wave[~line_mask], datacube[3, :][~line_mask], bounds_error=False,
-                                     fill_value=0)
-            masked_host = f(self.wave)
+        line_mask = np.where((self.wave < 4970.) & (self.wave > 4950.) |
+                             (self.wave < 5020.) & (self.wave > 5000.) |
+                             (self.wave < 6590.) & (self.wave > 6540.) |
+                             (self.wave < 6740.) & (self.wave > 6710.) |
+                             (self.wave < 3737.) & (self.wave > 3717.) |
+                             (self.wave < 4872.) & (self.wave > 4852.) |
+                             (self.wave < 4350.) & (self.wave > 4330.) |
+                             (self.wave < 4111.) & (self.wave > 4091.), True, False)
 
-            self.flux = datacube[1, :] - masked_host  # ** change back to masked_host for BEL
-            self.err = datacube[2, :]
-            self.host = datacube[3, :]
-            self.qso = datacube[4, :]
-            self.host_data = datacube[1, :] - self.qso
+        f = interpolate.interp1d(self.wave[~line_mask], datacube[3, :][~line_mask], bounds_error=False, fill_value=0)
+        masked_host = f(self.wave)
+
+        self.flux = datacube[1, :] - masked_host  # ** change back to masked_host for BEL
+        self.err = datacube[2, :]
+        self.host = datacube[3, :]
+        self.qso = datacube[4, :]
+        self.host_data = datacube[1, :] - self.qso
 
         return self.wave, self.flux, self.err
 
-    def _HostDecompose(self, wave, flux, err, z, Mi, npca_gal, npca_qso, path):
+    def _HostDecompose(self):
         """
         core function to do host decomposition
         #Wave is the obs frame wavelength, n_gal and n_qso are the number of eigenspectra used to fit
@@ -1071,33 +1049,34 @@ class QSOFit:
 
         # read galaxy and qso eigenspectra -----------------------------------
         if not self.BC03:
-            galaxy = fits.open(path + 'pca/Yip_pca_templates/gal_eigenspec_Yip2004.fits')
+            galaxy = fits.open(self.path + 'pca/Yip_pca_templates/gal_eigenspec_Yip2004.fits')
             gal = galaxy[1].data
             wave_gal = gal['wave'].flatten()
             flux_gal = gal['pca'].reshape(gal['pca'].shape[1], gal['pca'].shape[2])
+
         if self.BC03:
             cc = 0
             flux03 = np.array([])
-            for i in glob.glob(path + '/bc03/*.gz'):
+            for i in glob.glob(self.path + '/bc03/*.gz'):
                 cc = cc + 1
                 gal_temp = np.genfromtxt(i)
                 wave_gal = gal_temp[:, 0]
                 flux03 = np.concatenate((flux03, gal_temp[:, 1]))
             flux_gal = np.array(flux03).reshape(cc, -1)
 
-        if Mi is None:
-            quasar = fits.open(path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_global.fits')
+        if self.Mi is None:
+            quasar = fits.open(self.path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_global.fits')
         else:
-            if -24 < Mi <= -22 and 0.08 <= z < 0.53:
-                quasar = fits.open(path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_CZBIN1.fits')
-            elif -26 < Mi <= -24 and 0.08 <= z < 0.53:
-                quasar = fits.open(path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_DZBIN1.fits')
-            elif -24 < Mi <= -22 and 0.53 <= z < 1.16:
-                quasar = fits.open(path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_BZBIN2.fits')
-            elif -26 < Mi <= -24 and 0.53 <= z < 1.16:
-                quasar = fits.open(path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_CZBIN2.fits')
-            elif -28 < Mi <= -26 and 0.53 <= z < 1.16:
-                quasar = fits.open(path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_DZBIN2.fits')
+            if -24 < self.Mi <= -22 and 0.08 <= self.z < 0.53:
+                quasar = fits.open(self.path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_CZBIN1.fits')
+            elif -26 < self.Mi <= -24 and 0.08 <= self.z < 0.53:
+                quasar = fits.open(self.path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_DZBIN1.fits')
+            elif -24 < self.Mi <= -22 and 0.53 <= self.z < 1.16:
+                quasar = fits.open(self.path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_BZBIN2.fits')
+            elif -26 < self.Mi <= -24 and 0.53 <= self.z < 1.16:
+                quasar = fits.open(self.path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_CZBIN2.fits')
+            elif -28 < self.Mi <= -26 and 0.53 <= self.z < 1.16:
+                quasar = fits.open(self.path + 'pca/Yip_pca_templates/qso_eigenspec_Yip2004_DZBIN2.fits')
             else:
                 raise RuntimeError('Host galaxy template is not available for this redshift and Magnitude!')
 
@@ -1106,44 +1085,44 @@ class QSOFit:
         flux_qso = qso['pca'].reshape(qso['pca'].shape[1], qso['pca'].shape[2])
 
         # get the shortest wavelength range
-        wave_min = max(wave.min(), wave_gal.min(), wave_qso.min())
-        wave_max = min(wave.max(), wave_gal.max(), wave_qso.max())
+        wave_min = max(self.wave.min(), wave_gal.min(), wave_qso.min())
+        wave_max = min(self.wave.max(), wave_gal.max(), wave_qso.max())
 
-        ind_data = np.where((wave > wave_min) & (wave < wave_max), True, False)
-        ind_gal = np.where((wave_gal > wave_min - 1.) & (wave_gal < wave_max + 1.), True, False)
-        ind_qso = np.where((wave_qso > wave_min - 1.) & (wave_qso < wave_max + 1.), True, False)
+        ind_data = [(self.wave > wave_min) & (self.wave < wave_max)]
+        ind_gal = [(wave_gal > wave_min - 1.) & (wave_gal < wave_max + 1.)]
+        ind_qso = [(wave_qso > wave_min - 1.) & (wave_qso < wave_max + 1.)]
 
-        flux_gal_new = np.zeros(flux_gal.shape[0] * flux[ind_data].shape[0]).reshape(flux_gal.shape[0],
-                                                                                     flux[ind_data].shape[0])
-        flux_qso_new = np.zeros(flux_qso.shape[0] * flux[ind_data].shape[0]).reshape(flux_qso.shape[0],
-                                                                                     flux[ind_data].shape[0])
+        flux_gal_new = np.zeros(flux_gal.shape[0] * self.flux[ind_data].shape[0]).reshape(flux_gal.shape[0],
+                                                                                          self.flux[ind_data].shape[0])
+        flux_qso_new = np.zeros(flux_qso.shape[0] * self.flux[ind_data].shape[0]).reshape(flux_qso.shape[0],
+                                                                                          self.flux[ind_data].shape[0])
         for i in range(flux_gal.shape[0]):
             fgal = interpolate.interp1d(wave_gal[ind_gal], flux_gal[i, ind_gal], bounds_error=False, fill_value=0)
-            flux_gal_new[i, :] = fgal(wave[ind_data])
+            flux_gal_new[i, :] = fgal(self.wave[ind_data])
         for i in range(flux_qso.shape[0]):
             fqso = interpolate.interp1d(wave_qso[ind_qso], flux_qso[0, ind_qso], bounds_error=False, fill_value=0)
-            flux_qso_new[i, :] = fqso(wave[ind_data])
+            flux_qso_new[i, :] = fqso(self.wave[ind_data])
 
-        wave_new = wave[ind_data]
-        flux_new = flux[ind_data]
-        err_new = err[ind_data]
+        wave_new = self.wave[ind_data]
+        flux_new = self.flux[ind_data]
+        err_new = self.err[ind_data]
 
-        flux_temp = np.vstack((flux_gal_new[0:npca_gal, :], flux_qso_new[0:npca_qso, :]))
+        flux_temp = np.vstack((flux_gal_new[0:self.npca_gal, :], flux_qso_new[0:self.npca_qso, :]))
         res = np.linalg.lstsq(flux_temp.T, flux_new)[0]
 
-        host_flux = np.dot(res[0:npca_gal], flux_temp[0:npca_gal])
-        qso_flux = np.dot(res[npca_gal:], flux_temp[npca_gal:])
+        host_flux = np.dot(res[0:self.npca_gal], flux_temp[0:self.npca_gal])
+        qso_flux = np.dot(res[self.npca_gal:], flux_temp[self.npca_gal:])
 
         data_cube = np.vstack((wave_new, flux_new, err_new, host_flux, qso_flux))
 
-        ind_f4200 = np.where((wave_new > 4160.) & (wave_new < 4210.), True, False)
+        ind_f4200 = [(wave_new > 4160.) & (wave_new < 4210.)]
         frac_host_4200 = np.sum(host_flux[ind_f4200]) / np.sum(flux_new[ind_f4200])
-        ind_f5100 = np.where((wave_new > 5080.) & (wave_new < 5130.), True, False)
+        ind_f5100 = [(wave_new > 5080.) & (wave_new < 5130.)]
         frac_host_5100 = np.sum(host_flux[ind_f5100]) / np.sum(flux_new[ind_f5100])
 
-        return data_cube  # ,frac_host_4200,frac_host_5100
+        return data_cube
 
-    def _DoContiFit(self, wave, flux, err, ra, dec, plateid, mjd, fiberid):
+    def _DoContiFit(self):
         """Fit the continuum with PL, Polynomial, UV/optical FeII, Balmer continuum"""
         global fe_uv, fe_op, fe_op_name
         fe_uv = np.genfromtxt(self.path + 'feII_UV_Mejia.txt')
@@ -1171,12 +1150,12 @@ class QSOFit:
         else:
             window_all = np.array([[self.wave[0], self.wave[-1]]])
 
-        tmp_all = np.array([np.repeat(False, len(wave))]).flatten()
+        tmp_all = np.array([np.repeat(False, len(self.wave))]).flatten()
         for jj in range(len(window_all)):
-            tmp = np.where((wave > window_all[jj, 0]) & (wave < window_all[jj, 1]), True, False)
+            tmp = [(self.wave > window_all[jj, 0]) & (self.wave < window_all[jj, 1])]
             tmp_all = np.any([tmp_all, tmp], axis=0)
 
-        if wave[tmp_all].shape[0] < 10:
+        if self.wave[tmp_all].shape[0] < 10:
             print('Continuum fitting pixel < 10.  ')
 
         # set initial paramiters for continuum
@@ -1196,7 +1175,8 @@ class QSOFit:
             pp_mg_op = np.asarray([0.01, 3000., 0.])
             pp0 = np.concatenate([pp0, pp_fe_op, pp_mg_op])
 
-        conti_fit = kmpfit.Fitter(residuals=self._residuals, data=(wave[tmp_all], flux[tmp_all], err[tmp_all]))
+        conti_fit = kmpfit.Fitter(residuals=self._residuals,
+                                  data=(self.wave[tmp_all], self.flux[tmp_all], self.err[tmp_all]))
         tmp_parinfo = [{'limits': (0., 100)}, {'limits': (-5., 3)},
                        {'limits': (0, 100)}, {'limits': (10000., 50000.)}, {'limits': (0.1, 2.)},
                        None, None, None]
@@ -1212,20 +1192,24 @@ class QSOFit:
         # to avoid the continuum windows falls within a BAL trough
         if self.rej_abs:
             if self.poly:
-                tmp_conti = conti_fit.params[0] * (wave[tmp_all] / 3000.0) ** conti_fit.params[1] + f_poly_conti(
-                    wave[tmp_all], conti_fit.params[5:8])
+                tmp_conti = conti_fit.params[0] * (self.wave[tmp_all] / 3000.0) ** conti_fit.params[1] + f_poly_conti(
+                    self.wave[tmp_all], conti_fit.params[5:8])
             else:
-                tmp_conti = conti_fit.params[0] * (wave[tmp_all] / 3000.0) ** conti_fit.params[1]
-            ind_noBAL = ~np.where((flux[tmp_all] < tmp_conti - 3. * err[tmp_all]) & (wave[tmp_all] < 3500.), True,
-                                  False)
-            f = kmpfit.Fitter(residuals=self._residuals, data=(
-                wave[tmp_all][ind_noBAL], smooth(flux[tmp_all][ind_noBAL], 10), err[tmp_all][ind_noBAL]))
+                tmp_conti = conti_fit.params[0] * (self.wave[tmp_all] / 3000.0) ** conti_fit.params[1]
+
+            ind_BAL = [(self.flux[tmp_all] < tmp_conti - 3. * self.err[tmp_all]) & (self.wave[tmp_all] < 3500.)]
+            ind_noBAL = [not b for b in ind_BAL]
+            f = kmpfit.Fitter(residuals=self._residuals,
+                              data=(self.wave[tmp_all][ind_noBAL],
+                                    smooth(self.flux[tmp_all][ind_noBAL], 10),
+                                    self.err[tmp_all][ind_noBAL]))
+
             conti_fit.parinfo = tmp_parinfo
             conti_fit.fit(params0=pp0)
 
         # calculate continuum luminoisty
-        L = self._L_conti(wave, conti_fit.params)
-        f_4570 = self._fe4570(wave, conti_fit.params)
+        L = self._L_conti(self.wave, conti_fit.params)
+        f_4570 = self._fe4570(self.wave, conti_fit.params)
 
         # calculate MC err
         if self.MC_conti and self.n_trails > 0:
@@ -1241,7 +1225,7 @@ class QSOFit:
         # get conti result -----------------------------
         if not self.MC_conti:
             self.conti_result = np.array(
-                [ra, dec, self.plateid, self.mjd, self.fiberid, self.z, self.SN_ratio_conti,
+                [self.ra, self.dec, self.plateid, self.mjd, self.fiberid, self.z, self.SN_ratio_conti,
                  *conti_fit.params[:8], *L, f_4570])
             self.conti_result_name = res_name
             self.fe_result = np.array([*conti_fit.params[ppxfe:]])
@@ -1254,7 +1238,8 @@ class QSOFit:
             res_err_name = np.concatenate([[i, i + '_err'] for i in res_name[7:]])
 
             self.conti_result = np.array(
-                [ra, dec, plateid, mjd, fiberid, self.z, self.SN_ratio_conti, *res_err, *L_err, f_4570, all_fe_std])
+                [self.ra,self. dec, self.plateid, self.mjd, self.fiberid, self.z, self.SN_ratio_conti,
+                 *res_err, *L_err, f_4570, all_fe_std])
             self.conti_result_name = np.array(
                 ['ra', 'dec', 'plateid', 'MJD', 'fiberid', 'redshift', 'SN_ratio_conti', *res_err_name])
 
@@ -1266,24 +1251,16 @@ class QSOFit:
         self.tmp_all = tmp_all
 
         # save different models--------------------
-        f_fe_mgii_model = Fe_flux_mgii(wave, conti_fit.params[feopxmg:])
-        f_fe_balmer_model = Fe_flux_balmer(wave, conti_fit.params[ppxfe:feopxmg])
-        f_pl_model = conti_fit.params[0] * (wave / 3000.0) ** conti_fit.params[1]
-        f_bc_model = balmer_conti(wave, conti_fit.params[2:5])
-        f_poly_model = f_poly_conti(wave, conti_fit.params[5:8])
-        f_conti_model = f_pl_model + f_fe_mgii_model + f_fe_balmer_model + f_poly_model + f_bc_model
-        line_flux = flux - f_conti_model
+        self.f_fe_mgii_model = Fe_flux_mgii(self.wave, conti_fit.params[feopxmg:])
+        self.f_fe_balmer_model = Fe_flux_balmer(self.wave, conti_fit.params[ppxfe:feopxmg])
+        self.f_pl_model = conti_fit.params[0] * (self.wave / 3000.0) ** conti_fit.params[1]
+        self.f_bc_model = balmer_conti(self.wave, conti_fit.params[2:5])
+        self.f_poly_model = f_poly_conti(self.wave, conti_fit.params[5:8])
+        self.PL_poly_BC = self.f_pl_model + self.f_poly_model + self.f_bc_model
+        self.f_conti_model = self.f_fe_mgii_model + self.f_fe_balmer_model + self.PL_poly_BC
+        self.line_flux = self.flux - self.f_conti_model
 
-        self.f_conti_model = f_conti_model
-        self.f_bc_model = f_bc_model
-        self.f_fe_uv_model = f_fe_mgii_model
-        self.f_fe_op_model = f_fe_balmer_model
-        self.f_pl_model = f_pl_model
-        self.f_poly_model = f_poly_model
-        self.line_flux = line_flux
-        self.PL_poly_BC = f_pl_model + f_poly_model + f_bc_model
-
-        return self.conti_result, self.conti_result_name, self.fe_result, self.fe_result_name
+        return
 
     def _L_conti(self, wave, pp):
         """Calculate continuum Luminoisity at 1350,3000,5100A"""
@@ -1344,17 +1321,11 @@ class QSOFit:
         else:
             raise RuntimeError('No this option for Fe_uv_op, poly and BC!')
 
-        if self.CFT:
-            return np.zeros_like(xval)
-
         return yval
 
     def _residuals(self, pp, data):
         """Continual residual function used in kmpfit"""
         xval, yval, weight = data
-        if self.CFT:
-            yval = yval - continuum_fitting(xval, yval + 100, self.CFT_smooth) + 100
-            return yval / weight
         return (yval - self._f_conti_all(xval, pp)) / weight
 
     # ---------MC error for continuum parameters-------------------
@@ -1780,7 +1751,7 @@ class QSOFit:
         t = Table(all_result, names=all_result_name)
         t.write(save_fits_path + save_fits_name + '.fits', format='fits', overwrite=True)
 
-    def _plotSubPlot_Elines(self, cft_line: np.array, conti_line: np.array) -> None:
+    def _plotSubPlot_Elines(self, arr_conti: np.array) -> None:
         """Plotting emission lines onto main spectrum figure"""
         if self.MC:
             for p in range(int(len(self.gauss_result) / 12)):
@@ -1789,7 +1760,7 @@ class QSOFit:
                 else:
                     color = 'r'
                 gauss_line = manygauss(np.log(self.wave), self.gauss_result[::2][p * 6:(p + 1) * 6][1:])
-                plt.plot(self.wave, gauss_line + conti_line, color=color)
+                plt.plot(self.wave, gauss_line + arr_conti, color=color)
             total_param = np.delete(self.gauss_result[::2], np.arange(0, self.gauss_result[::2].size, 6))
 
         else:
@@ -1799,13 +1770,13 @@ class QSOFit:
                 else:
                     color = 'r'
                 gauss_line = manygauss(np.log(self.wave), self.gauss_result[p * 6:(p + 1) * 6][1:])
-                plt.plot(self.wave, gauss_line + conti_line, color=color)
+                plt.plot(self.wave, gauss_line + arr_conti, color=color)
             total_param = np.delete(self.gauss_result, np.arange(0, self.gauss_result.size, 6))
 
         total_gauss_line = manygauss(np.log(self.wave), total_param)
-        plt.plot(self.wave, total_gauss_line + conti_line, 'b', label='line', lw=2)
+        plt.plot(self.wave, total_gauss_line + arr_conti, 'b', label='line', lw=2)
 
-    def _plotSubPlot_Main(self, linefit: bool, cft_line: np.array) -> None:
+    def _plotSubPlot_Main(self, linefit: bool) -> None:
         """Plotting the main spectrum figure"""
         plt.plot(self.wave_prereduced, self.flux_prereduced, 'k', label='data')
 
@@ -1828,7 +1799,7 @@ class QSOFit:
 
         # Fitted Emission line models
         if linefit:
-            self._plotSubPlot_Elines(cft_line, cft_line + self.f_conti_model)
+            self._plotSubPlot_Elines(self.f_conti_model)
 
         plt.plot([0, 0], [0, 0], 'r', label='line br')
         plt.plot([0, 0], [0, 0], 'g', label='line na')
@@ -1839,8 +1810,12 @@ class QSOFit:
 
         # Balmer Continuum
         if self.BC:
-            plt.plot(self.wave, self.PL_poly_BC + cft_line, 'y', lw=2, label='BC')
-        plt.plot(self.wave, self.PL_poly + cft_line, color='orange', lw=2, label='conti')
+            plt.plot(self.wave, self.PL_poly_BC, 'y', lw=2, label='BC')
+
+        if self.CFT:
+            plt.plot(self.wave, self.f_conti_model, color='orange', lw=2, label='conti')
+        else:
+            plt.plot(self.wave, self.f_pl_model, self.f_poly_model, color='orange', lw=2, label='conti')
 
         # Framing
         if not self.decomposed:
@@ -1870,7 +1845,7 @@ class QSOFit:
                     plt.text(line_cen[ll] + 10, 0.8 * self.flux_prereduced.max(), line_name[ll], rotation=90,
                              fontsize=15)
 
-    def _plotSubPlot_Lines(self, cft_line: np.array) -> None:
+    def _plotSubPlot_Lines(self) -> None:
         """Plotting the emission line subplot"""
         for c in range(self.ncomp):
             # create subplot axes
@@ -1887,14 +1862,14 @@ class QSOFit:
                 return
 
             # plot lines
-            plt.plot(self.wave, self.line_flux - cft_line, 'k')
-            self._plotSubPlot_Elines(cft_line, np.zeros_like(cft_line))
+            plt.plot(self.wave, self.line_flux, 'k')
+            self._plotSubPlot_Elines(np.zeros_like(self.wave))
 
             # subplot setup
             plt.xlim(self.all_comp_range[c])
             bool_linearea = (self.wave > self.all_comp_range[c][0]) & (self.wave < self.all_comp_range[c][1])
-            f_max = self.line_flux[np.where(bool_linearea, True, False)].max()
-            f_min = self.line_flux[np.where(bool_linearea, True, False)].min()
+            f_max = self.line_flux[bool_linearea].max()
+            f_min = self.line_flux[bool_linearea].min()
             plt.ylim(f_min * 0.9, f_max * 1.1)
             axn.set_xticks([self.all_comp_range[c][0], np.round(np.mean(self.all_comp_range[c]), -1),
                             self.all_comp_range[c][1]])
@@ -1928,19 +1903,12 @@ class QSOFit:
             plt.title(f"ra,dec = ({str(self.ra)},{str(self.dec)})    {str(self.sdss_name)}    z = {str(self.z)}",
                       fontsize=20)
 
-        # Plotted line setup
-        cft_line = np.zeros_like(self.wave)
-        if self.CFT:
-            cft_line = continuum_fitting(self.wave, self.flux + 100, self.CFT_smooth) - 100
-
-        self.PL_poly = self.f_pl_model + self.f_poly_model
-
         # Creating the main spectrum figure
-        self._plotSubPlot_Main(linefit, cft_line)
+        self._plotSubPlot_Main(linefit)
 
         # Creating the emission line model subplots
         if linefit:
-            self._plotSubPlot_Lines(cft_line)
+            self._plotSubPlot_Lines()
 
         if linefit:
             plt.text(0.4, -1.4, r'$\rm Rest \, Wavelength$ ($\rm \AA$)', fontsize=20, transform=ax.transAxes)
