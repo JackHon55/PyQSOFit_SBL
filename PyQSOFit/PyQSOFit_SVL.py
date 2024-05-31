@@ -188,7 +188,6 @@ def manygauss(xval, pp):
 
 class LineProperties:
     """Class to hold the PyQSOFit output property for a line"""
-
     def __init__(self, properties: Tuple = (0, 0, 0, 0, 0, 0)):
         self.fwhm = properties[0]
         self.sigma = properties[1]
@@ -196,12 +195,12 @@ class LineProperties:
         self.ew = properties[3]
         self.peak = properties[4]
         self.area = properties[5]
-        self.list = properties
+        self.list = {'fwhm': self.fwhm, 'sigma': self.sigma, 'skew': self.skew,
+                     'ew': self.ew, 'peak': self.peak, 'area': self.area}
 
 
 class SectionParameters:
     """class to hold to information about a fitting section when fitting a section of lines"""
-
     def __init__(self, wave: np.array, linelist, section_lines: list):
         self.line_indices = np.where(linelist['compname'] == section_lines, True, False)  # get line index
         self.n_line = np.sum(self.line_indices)  # n line in one complex
@@ -215,7 +214,6 @@ class SectionParameters:
 
 class InitialProfileParameters:
     """class to translate input profile into input fitting parameters"""
-
     def __init__(self, inputstring):
         mode_definitions = inputstring
         self.mode_mode = {"v": "", "g": "0", "s": "0"}
@@ -223,6 +221,7 @@ class InitialProfileParameters:
             self.mode_mode[xmode[0]] = xmode.split("[")[1][:-1]
 
     def process_profile(self, v_pos: float, voffset: float, ini_sig: str):
+        """function to call to run all the operations"""
         ini_arr = np.empty(4, dtype=float)
         par_arr = np.empty(4, dtype=dict)
         ini_arr[0], par_arr[0] = self._sigma_defition(ini_sig)
@@ -235,6 +234,7 @@ class InitialProfileParameters:
                 'ini_skw': ini_arr[3], 'skw_par': par_arr[3]}
 
     def _velocity_offset_definition(self, v_pos: float, voffset: float):
+        """initialise the velocity offset bounds based on vmode"""
         mode = self.mode_mode["v"]
         lambda_low = v_pos - voffset
         lambda_up = v_pos + voffset
@@ -255,6 +255,7 @@ class InitialProfileParameters:
         return v_pos, lam_par
 
     def _gamma_defintion(self):
+        """Turns gamma on or off and sets bounds for Voigt profile"""
         mode = self.mode_mode["g"]
         if mode == "0":  # off
             ini_gam = 0
@@ -272,6 +273,7 @@ class InitialProfileParameters:
         return ini_gam, gam_par
 
     def _skew_definitions(self):
+        """Initialises the first guess for skew and sets the bounds for skew"""
         mode = self.mode_mode["s"]
         if mode == "":  # Free
             ini_skw = 0
@@ -298,10 +300,11 @@ class InitialProfileParameters:
         return ini_skw, skw_par
 
     def _sigma_defition(self, ini_sig: str):
-        if len(ini_sig.split(',')) == 1:
+        """initialises the first guess for sigma and sets the bounds for sigma"""
+        if len(ini_sig.split(',')) == 1:    # Fixed sigma
             sig_par = {'fixed': True}
             ini_sig = float(ini_sig.split(',')[0])
-        else:
+        else:   # Free sigma
             sig_down, sig_up = np.sort([float(ini_sig.split(',')[0]), float(ini_sig.split(',')[1])])
             ini_sig = np.mean([sig_down, sig_up])
             sig_par = {'limits': (sig_down, sig_up)}
@@ -309,6 +312,68 @@ class InitialProfileParameters:
 
 
 class LineDef:
+    """
+            Class to create line profile to add to Section for fitting
+
+            Parameters:
+            -----------
+            l_name: str
+                Name of the line. Must be unique.
+
+            l_center: float
+                The rest wavelength for the line.
+
+            fwhm: tuple of two elements
+                  One value input as (500,) will fix the fwhm of the modelling profile at 500.
+                  Two values input as (1200, 7000) will have the fwhm range from 1200, 7000.
+                  Values are not exact due to conversion to a log scale during modelling.
+
+            profile_link: str, optional
+                 A string that tells PyQSOFit which line the profile of this one is linked to.
+                 For example, definition for OIII4959, will have 'OIII5007*1' as profile_link.
+                 This overwrites fwhm, meaning fwhm can be ignored.
+
+            skew: tuple of two elements
+                One value input as (2.3,) will fix the skew of the modelling profile at 2.3.
+                Two values input as (-10, 10) will have the skew range from -10 to 10.
+
+            gamma: float, optional
+                A string that controls the Voigt profile for the modelling.
+                By default, it is an empty string and will turn off Voigt profile and use Gaussian profile instead.
+
+                - If specified 'On', it will have a free gamma value and uses Voigt profile.
+
+                - If the string has 'f0.53', it will fix the gamma at 0.53.
+
+            voffset: float
+                The range of velocity offset allowed from the centre wavelength.
+
+            vmode: str, optional
+                Controls how the voffset range is defined.
+
+                - Default is '', and means the offset is free on both ends.
+
+                - '+' restricts the range such that the velocity offset can only increase in wavelength.
+
+                - '-' restricts the range such that the velocity offset can only decrease in wavelength.
+
+                - '.' sets the velocity offset at the specified voffset value.
+
+            scale: float
+                A value that controls the scale of the modelling profile.
+
+            flux_link: str, optional
+                Tells PyQSOFit which line the flux of this one is linked to.
+                For example, definition for OIII4959, will have 'OIII5007*0.33' as flux_link.
+                This overwrites scale, meaning scale can be ignored.
+
+            default_bel: bool, optional.
+                If True will set the fwhm to (1200, 7000), voffset to 5e-3, and skew to (-10, 10).
+
+            default_nel. bool, optional.
+                If True will set the sig to (50, 1200), voffset to 1e-3, and skew to (0,).
+
+    """
     def __init__(self, fwhm: Tuple = (100, 1000), profile_link: str = "", skew: Tuple = (-10, 10), gamma: str = "",
                  vmode: str = "", voffset: float = 0.0, scale: float = 0.005, flux_link: str = "",
                  default_bel: bool = False, default_nel: bool = False, *, l_name: str = "", l_center: float = 0.0):
@@ -395,6 +460,13 @@ class LineDef:
 
 
 class Section:
+    """
+    Class to create sections to add lines into for fitting
+
+    Call line_add to add a single line
+
+    Call add_lines to add a list of lines
+    """
     def __init__(self, *, section_name: str = "", start_range: float = 0.0, end_range: float = 1.0):
         self.section_name = section_name
         self.start_range = start_range
@@ -539,8 +611,10 @@ class QSOFit:
             magnitude bins. For galaxy, the global model has 10 PCA components and first 5 will enough to reproduce
             98.37% galaxy spectra. For QSO, the global model has 50, and the first 20 will reproduce 96.89% QSOs. If
             with i-band absolute magnitude, the Luminosity-redshift binned PCA components are available. Then the
-            first 10 PCA in each bin is enough to reproduce most QSO spectrum. Default: False BC03: bool, optional if
-            True, it will use Bruzual1 & Charlot 2003 host model to fit spectrum, high shift host will be low
+            first 10 PCA in each bin is enough to reproduce most QSO spectrum. Default: False
+
+        BC03: bool, optional
+            if True, it will use Bruzual1 & Charlot 2003 host model to fit spectrum, high shift host will be low
             resolution R ~ 300, the rest is R ~ 2000. Default: False
 
         Mi: float, optional
@@ -1123,7 +1197,7 @@ class QSOFit:
             pp0 = np.concatenate([pp0, pp_fe_op, pp_mg_op])
 
         conti_fit = kmpfit.Fitter(residuals=self._residuals, data=(wave[tmp_all], flux[tmp_all], err[tmp_all]))
-        tmp_parinfo = [{'limits': (0., 100)}, {'limits': (-5., 0)},
+        tmp_parinfo = [{'limits': (0., 100)}, {'limits': (-5., 3)},
                        {'limits': (0, 100)}, {'limits': (10000., 50000.)}, {'limits': (0.1, 2.)},
                        None, None, None]
         # fe_op_info = [{'limits': (500., 5000.)}, {'limits': (-0.1, 0.1)},
@@ -1612,6 +1686,19 @@ class QSOFit:
         sigma = np.sqrt(lambda2 / lambda0 - (lambda1 / lambda0) ** 2) / np.exp(np.mean(cen)) * self.c
         return sigma
 
+    def _line_peak(self, n_gauss: int, pp: np.array, xx: np.array):
+        peaks = np.empty((n_gauss,))
+        areas = np.empty((n_gauss,))
+        xlog = np.log(xx)
+
+        for xline in range(n_gauss):
+            xprofile = onegauss(xlog, np.split(pp, n_gauss)[xline])
+            peaks[xline] = xx[np.argmax(abs(xprofile))]
+            valid_indices = xprofile > 0.01 * np.amax(xprofile)
+            areas[xline] = np.trapz(xprofile[valid_indices], x=xx[valid_indices])
+
+        return np.average(peaks, weights=areas)
+
     # -----line properties calculation function--------
     def line_property(self, pp: np.array) -> LineProperties:
         """
@@ -1624,12 +1711,14 @@ class QSOFit:
             return LineProperties((0., 0., 0., 0., 0., 0.))
 
         cen, sig, skw = self._line_gaussian_pp(pp, n_gauss)
-        skew = np.mean(skw)
+
+        skew = -999 if n_gauss > 1 else np.mean(skw)
         xx, yy = self._line_model_compute(pp)
         fwhm = self._line_fwhm(xx, yy, np.exp(np.mean(cen)))    # Calculate FWHM, -999 if error
         area, ew = self._line_flux_ew(xx, yy)
         sigma = self._line_sigma(pp, cen, xx)
-        peak = xx[np.argmax(yy)] if area > 0 else xx[np.argmin(yy)]
+        single_peak = xx[np.argmax(abs(yy))]
+        peak = single_peak if n_gauss == 1 else self._line_peak(n_gauss, pp, xx)
 
         return LineProperties((fwhm, sigma, skew, ew, peak, area))
 
@@ -1908,7 +1997,7 @@ class QSOFit:
         err_peak = float(self.line_result[err_id[2]])
         err_sig = property_values.sigma * float(err_id[0]) / property_values.fwhm
         err_fwhm = float(self.line_result[err_id[0]])
-        err_skw = float(self.line_result[err_id[4]])
+        err_skw = -999 if property_values.skew == -999 else float(self.line_result[err_id[4]])
         err_scale = float(self.line_result[err_id[1]])
         err_area = property_values.area * np.sqrt((err_scale / scale) ** 2 + (err_fwhm / property_values.fwhm) ** 2)
         err_ew = property_values.ew * np.sqrt(conti_error ** 2 + (err_area / property_values.area) ** 2)
@@ -1920,6 +2009,9 @@ class QSOFit:
         # name_id and err_id follows the name order as in properties list, repeating every 6 element
         properties = ['fwhm', 'sigma', 'skewness', 'EW', 'Peak', 'Area']
         name_id, err_id = self.line_errordata_read(line_name)
+        if len(name_id) == 0:
+            print(f"{line_name} not fitted")
+            return np.asarray([LineProperties().list, LineProperties().list])
 
         # Calculate values and errors for each property
         property_values = self.line_property(self.line_result[name_id])
@@ -1933,9 +2025,11 @@ class QSOFit:
             print('----------------------------------------------')
             print(line_name + ' data')
             for k in range(0, len(properties)):
-                print((properties[k] + '               ')[:15] + ':', '\t', np.round(property_values.list[k], 5))
+                print_values = list(property_values.list.values())
+                print_errors = list(property_errors.list.values())
+                print((properties[k] + '               ')[:15] + ':', '\t', np.round(print_values[k], 5))
                 if self.MC:
-                    print((properties[k] + '_err           ')[:15] + ':', '\t', np.round(property_errors.list[k], 5))
+                    print((properties[k] + '_err           ')[:15] + ':', '\t', np.round(print_errors[k], 5))
 
         return np.asarray([property_values.list, property_errors.list])
 
@@ -1946,6 +2040,25 @@ class QSOFit:
         interlaced_array[0::2] = array1
         interlaced_array[1::2] = array2
         return interlaced_array
+
+    @property
+    def average_noise_area(self) -> float:
+        try:
+            tmp = self.gauss_line[0]
+        except (IndexError, NameError):
+            print("Unable to perform this operation yet. Spectrum has not been fit")
+            return 0
+        end_flux = np.abs(self.flux - self.f_conti_model - np.sum(self.gauss_line, 0))
+        end_wave = self.wave
+        area_of_residual = np.trapz(end_flux, end_wave)
+        strong_noise = end_flux[end_flux > 1.4826 * 3 * mad(end_flux)]
+        return area_of_residual / len(strong_noise)
+
+    def full_result_print(self):
+        a = 0
+        for i, j in zip(self.line_result_name, self.line_result):
+            print(a, i, j)
+            a += 1
 
 # Add CIV abs optional in continuum removal
 # Change abs output for min = peak

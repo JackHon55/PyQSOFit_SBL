@@ -10,6 +10,7 @@ hbo3_section = Section(section_name='O3', start_range=4500, end_range=5300)
 hanl_section = Section(section_name='HA', start_range=6000, end_range=7000)
 
 line_hb_br1 = LineDef(l_name='Hb_br1', l_center=4861.33, scale=0.005, default_bel=True)
+line_hb_br2 = LineDef(l_name='Hb_br2', l_center=4861.33, scale=0.005,  fwhm=(1200, 5000), voffset=5e-3, vmode="-")
 line_hb_na = LineDef(l_name='Hb_na', l_center=4861.33, scale=0.002, fwhm=(50, 700), voffset=1e-3, skew=(0,))
 
 line_or = LineDef(l_name='OIII5007c', l_center=5006.843, scale=0.003, default_nel=True)
