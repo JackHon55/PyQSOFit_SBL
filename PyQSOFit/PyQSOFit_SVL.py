@@ -323,7 +323,7 @@ class LineDef:
             l_center: float
                 The rest wavelength for the line.
 
-            fwhm: tuple of two elements
+            fwhm: tuple of two elements in km/s
                   One value input as (500,) will fix the fwhm of the modelling profile at 500.
                   Two values input as (1200, 7000) will have the fwhm range from 1200, 7000.
                   Values are not exact due to conversion to a log scale during modelling.
@@ -345,7 +345,7 @@ class LineDef:
 
                 - If the string has 'f0.53', it will fix the gamma at 0.53.
 
-            voffset: float
+            voffset: float, in km/s
                 The range of velocity offset allowed from the centre wavelength.
 
             vmode: str, optional
@@ -381,7 +381,7 @@ class LineDef:
         self.l_center = l_center
         self.fwhm = fwhm
         self._sig = (0, 0.01)
-        self.voffset = voffset
+        self._voffset = voffset
         self._skew = skew
         self.gamma = gamma
         self.vmode = vmode
@@ -391,11 +391,11 @@ class LineDef:
 
         if default_nel:
             self.fwhm = (50, 1200)
-            self.voffset = 1e-3
+            self._voffset = 300
             self._skew = (0,)
         if default_bel:
             self.fwhm = (1200, 7000)
-            self.voffset = 5e-3
+            self._voffset = 1500
             self._skew = (-10, 10)
 
     @property
@@ -458,6 +458,12 @@ class LineDef:
         c = 299792.458  # km/s
         return np.round(np.sqrt(np.log(1 + ((xfwhm / c / 2.355) ** 2))), 5)
 
+    @property
+    def voffset(self):
+        c = 299792.458  # km/s
+        wave_offset = self._voffset / 3e5 * self.l_center
+        log_offset = np.log(self.l_center + wave_offset) - np.log(self.l_center)
+        return log_offset
 
 class Section:
     """
@@ -881,7 +887,7 @@ class QSOFit:
             self.f_conti_model = np.zeros_like(self.wave) if self.f_conti_model is None else self.f_conti_model
         else:
             print('Fit Conti')
-            self._DoContiFit(self.wave, self.flux, self.err, self.ra, self.dec, self.plateid, self.mjd, self.fiberid)
+            self._DoContiFit()
             print('Conti done')
         # fit line
         print('Fit Line')
@@ -1088,9 +1094,9 @@ class QSOFit:
         wave_min = max(self.wave.min(), wave_gal.min(), wave_qso.min())
         wave_max = min(self.wave.max(), wave_gal.max(), wave_qso.max())
 
-        ind_data = [(self.wave > wave_min) & (self.wave < wave_max)]
-        ind_gal = [(wave_gal > wave_min - 1.) & (wave_gal < wave_max + 1.)]
-        ind_qso = [(wave_qso > wave_min - 1.) & (wave_qso < wave_max + 1.)]
+        ind_data = np.where((self.wave > wave_min) & (self.wave < wave_max), True, False)
+        ind_gal = np.where((wave_gal > wave_min - 1.) & (wave_gal < wave_max + 1.), True, False)
+        ind_qso = np.where((wave_qso > wave_min - 1.) & (wave_qso < wave_max + 1.), True, False)
 
         flux_gal_new = np.zeros(flux_gal.shape[0] * self.flux[ind_data].shape[0]).reshape(flux_gal.shape[0],
                                                                                           self.flux[ind_data].shape[0])
@@ -1152,7 +1158,7 @@ class QSOFit:
 
         tmp_all = np.array([np.repeat(False, len(self.wave))]).flatten()
         for jj in range(len(window_all)):
-            tmp = [(self.wave > window_all[jj, 0]) & (self.wave < window_all[jj, 1])]
+            tmp = np.where((self.wave > window_all[jj, 0]) & (self.wave < window_all[jj, 1]), True, False)
             tmp_all = np.any([tmp_all, tmp], axis=0)
 
         if self.wave[tmp_all].shape[0] < 10:
@@ -1815,7 +1821,7 @@ class QSOFit:
         if self.CFT:
             plt.plot(self.wave, self.f_conti_model, color='orange', lw=2, label='conti')
         else:
-            plt.plot(self.wave, self.f_pl_model, self.f_poly_model, color='orange', lw=2, label='conti')
+            plt.plot(self.wave, self.f_pl_model + self.f_poly_model, color='orange', lw=2, label='conti')
 
         # Framing
         if not self.decomposed:

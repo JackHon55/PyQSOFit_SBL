@@ -165,7 +165,7 @@ for xname, xz in zip(name, spec_z):
 
     start = timeit.default_timer()
     q.Fit(decomposition_host=True, PL=True, poly=True, Fe_uv_op=False, BC=True,
-          CFT_smooth=75, CFT=True, MC=False, MC_conti=False,
+          CFT_smooth=25, CFT=False, MC=False, MC_conti=False,
           nsmooth=1, deredden=False, reject_badpix=False, redshift=False,
           initial_guess=None, n_trails=5, linefit=True, save_result=False, plot_fig=True, save_fig=False,
           plot_line_name=True, plot_legend=True, dustmap_path=None, save_fig_path=None,
