@@ -6,6 +6,21 @@ from scipy.ndimage import gaussian_filter as g_filt
 from scipy.special import erf, wofz
 
 
+def blueshifting(spec, zshift):
+    zspec = np.copy(spec)
+    wave0 = zspec[0] / (1 + zshift)
+    wavenew = np.linspace(wave0[0], wave0[-1], len(wave0))
+    fluxnew = rebin_spec(wave0, zspec[1], wavenew)
+    return np.asarray([wavenew, fluxnew])
+
+
+def redshifting(spec, zshift):
+    wave0 = spec[0] * (1 + zshift)
+    wavenew = np.linspace(wave0[0], wave0[-1], len(wave0))
+    fluxnew = rebin_spec(wave0, spec[1], wavenew)
+    return np.asarray([wavenew, fluxnew])
+
+
 def nan_specremove(spec):
     return np.asarray([spec[0][~np.isnan(spec[1])], spec[1][~np.isnan(spec[1])]])
 

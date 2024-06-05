@@ -22,7 +22,7 @@ from scipy import interpolate
 from typing import Tuple
 
 from Spectra_handling.Spectrum_utls import skewed_voigt
-from Spectra_handling.Spectrum_processing import blueshifting
+from Spectra_handling.Spectrum_plotting import blueshifting
 from scipy.stats import median_abs_deviation as mad
 from kapteyn import kmpfit
 from PyAstronomy import pyasl

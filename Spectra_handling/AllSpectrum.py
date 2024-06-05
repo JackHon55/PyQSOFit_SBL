@@ -1,169 +1,182 @@
-if __name__ == "__main__":    
+import numpy as np
+from typing import Tuple
+
+if __name__ == "__main__":
     # import numpy as np
     import matplotlib.pyplot as plt
 from astropy.io import fits
 from Spectra_handling.Spectrum_utls import *
-from Spectra_handling.Spectrum_processing import *
 from coord_format import Coord
 from date_format import Datefs
 
 
-# Spectrum super class
 class Spectrum(object):
+    """ The superclass with all the basic properties a spectrum should be associated with """
+
     def __init__(self):
-        self._spectrum = None
-        self._redshift = None
-        self._coord = None
-        self._ra = None
-        self._dec = None
+        self.spectrum: np.array = None
+        self.spectrum_name: str = ""
+        self._p_spectrum: np.array = None
+        self.ra = None
+        self.dec = None
         self._time = None
-        self._spectrum_name = None
-        self._pspec = None
-        self._fluxmult = None
+        self.mjd = None
+        self.coord_mode = 'DEG'
+
+    def rebin(self, smoothing: int = 0, wave_in: np.array = None, persist: bool = True) -> np.array:
+        """ Function to rebin spectrum to different wavelength array """
+        xspec = self.p_spectrum if persist else self.spectrum
+        if wave_in is None:
+            print("Only smoothing, rebin operation requires a wave_in")
+            return np.asarray([xspec[0], g_filt(xspec[1], smoothing)])
+        tmp = rebin_spec(*xspec, wave_in)
+        self.p_spectrum = np.asarray([tmp[0], g_filt(tmp[1], smoothing)])
+        return self.p_spectrum
+
+    def rest(self, smoothing: int = 0, persist: bool = True) -> np.array:
+        """ Function to remove redshifting provided redshift exist"""
+        xspec = self.p_spectrum if persist else self.spectrum
+        tmp = blueshifting(xspec, self.redshift)
+        self.p_spectrum = np.asarray([tmp[0], g_filt(tmp[1], smoothing)])
+        return self.p_spectrum
+
+    # Just normal smoothing
+    def smooth(self, smoothing: int = 0, persist: bool = True) -> np.array:
+        """ Function to smooth spectrum """
+        xspec = self.p_spectrum if persist else self.spectrum
+        self.p_spectrum = np.asarray([xspec[0], g_filt(xspec[1], smoothing)])
+        return self.p_spectrum
+
+    def clean_sky(self):
+        """ Function to remove 5577AA skyline"""
+        pix_size = np.diff(self.spectrum[0])[3]
+        self.spectrum = noise_to_linear(self.spectrum, x=(5578 - pix_size * 15, 5578 + pix_size * 15))
 
     @property
-    def pspec(self):
-        if self._pspec is None:
-            self._pspec = ProcessedSpec(self.spectrum, self.redshift)
-        return self._pspec
+    def p_spectrum(self):
+        if self._p_spectrum is None and self.spectrum is not None:
+            self._p_spectrum = self.spectrum
+        return self._p_spectrum
+
+    @p_spectrum.setter
+    def p_spectrum(self, xspec):
+        self._p_spectrum = xspec
 
 
-# SDSS subclass of spectrum
 class SDSSspec(Spectrum):
-    def __init__(self, filename):
+    def __init__(self, filename: str):
+        """
+        The class for calling SDSS spectrum
+
+        Parameters:
+        ------------
+        filename: str
+                File path of the sdss .fits file
+        """
         super(SDSSspec, self).__init__()
-        self._plate = None
-        self._fiber = None
-        self._best_fit = None
-        self.coord_mode = 'DEG'
-        self._coord = None
+        self.plate = None
+        self.fiber = None
+        self.best_fit: np.array = None
+        self.redshift: float = -999
         # For extraction of the wanted properties
         # ra, dec, plate, mjd, fiber in meta
         # wave, flux in spec
         # redshift in line
         with fits.open(filename) as data:
-            self.meta = data[0]
-            self.spec = data[1].data
-            self.line = data[3].data
+            self.read_sdss_meta(data[0])
+            self.read_sdss_redshift(data[3].data)
+            self.read_sdss_spectrum(data[1].data)
 
-    @property
-    def ra(self):
-        if self._coord is None:
-            self._coord = Coord(self.meta.header['RA'], self.meta.header['DEC'], self.coord_mode)
-        if self._ra is None:
-            self._ra = self._coord.ra
-        return self._ra
+    def read_sdss_meta(self, meta_data):
+        xcoord = Coord(meta_data.header['RA'], meta_data.header['DEC'], self.coord_mode)
+        self.ra = xcoord.ra
+        self.dec = xcoord.dec
 
-    @property
-    def dec(self):
-        if self._coord is None:
-            self._coord = Coord(self.meta.header['RA'], self.meta.header['DEC'], self.coord_mode)
-        if self._dec is None:
-            self._dec = self._coord.dec
-        return self._dec
+        self._time = Datefs(meta_data.header['MJD'], 'mjd')
+        self.mjd = self._time.mjd
 
-    @ra.setter
-    def ra(self, newra):
-        self._coord = Coord(newra, self.meta.header['DEC'], self.coord_mode)
-        self._ra = None
+        self.plate = meta_data.header['PLATEID']
+        self.fiber = meta_data.header['FIBERID']
+        # plate-mjd-fiber for SDSS sites
+        self.spectrum_name = f"{self.plate}-{self.mjd}-{('00000' + self.fiber)[-5:]}"
 
-    @dec.setter
-    def dec(self, newdec):
-        self._coord = Coord(self.meta.header['RA'], newdec, self.coord_mode)
-        self._dec = None
+    def read_sdss_redshift(self, line_data):
+        self.redshift = np.mean([j for j in [i[5] for i in line_data] if j != 0])
 
-    @property
-    def plate(self):
-        if self._plate is None:
-            self._plate = self.meta.header['PLATEID']
-        return self._plate
+    def read_sdss_spectrum(self, spec_data):
+        wave = np.asarray([10 ** i[1] for i in spec_data])
+        flux = np.asarray([i[0] for i in spec_data])
 
-    @property
-    def time(self):
-        if self._time is None:
-            self._time = Datefs(self.meta.header['MJD'], 'mjd')
-        return self._time
-
-    @property
-    def mjd(self):
-        return self.time.mjd
-
-    @property
-    def fiber(self):
-        if self._fiber is None:
-            self._fiber = self.meta.header['FIBERID']
-        return self._fiber
-
-    @property
-    def spectrum(self):
-        if self._spectrum is None:
-            wave = np.asarray([10 ** i[1] for i in self.spec])
-            flux = np.asarray([i[0] for i in self.spec])
-            self._spectrum = np.asarray([wave, flux])
-        return self._spectrum
-
-    @property
-    def redshift(self):
-        if self._redshift is None:
-            self._redshift = np.mean([j for j in [i[5] for i in self.line] if j != 0])
-        return self._redshift
-
-    @property
-    def best_fit(self):
-        if self._best_fit is None:
-            bflux = np.asarray([i[7] for i in self.spec])
-            self._spectrum = np.asarray([self.spectrum[0], bflux])
-        return self._best_fit
-
-        # This method allows printing the spectrum name as
-        # plate-mjd-xxxx
-        # This allows easy integration with the sdss online browser service
-        # as well as conversion into urls
-
-    @property
-    def spectrum_name(self):
-        if self._spectrum_name is None:
-            fiber_string = str(self.fiber)
-            while len(fiber_string) != 4:
-                fiber_string = '0' + fiber_string
-            self._spectrum_name = str(self.plate) + '-' + str(self.mjd) + '-' + fiber_string
-        return self._spectrum_name
+        self.spectrum = np.asarray([wave, flux])
+        self.best_fit = np.asarray([wave, np.asarray([i[7] for i in spec_data])])
 
 
 # 6dfgs subclass
 class SixDFGS(Spectrum):
-    def __init__(self, filename, clean_sky=1):
+    def __init__(self, filename: str):
+        """
+        The class for calling 6dFGS official .fits spectrum
+
+        Parameters:
+        ---------------
+        filename: str
+            File path of the 6dfgs .fits file
+        """
         super(SixDFGS, self).__init__()
         self.data = fits.open(filename)
-        self.coord_mode = 'DEG'
-        self._spec_id = 7
-        self._variance = None
-        self.clean = clean_sky
+        self.hdr_id = 7
+        self.error = None
+        self.variance = None
         self._specv = None
         self._specr = None
+        self.redshift: float = -999
 
-    @property
-    def spectrum(self):
-        if self._spectrum is None:
-            x_id = self._spec_id
-            xwave = self.data[x_id].data[3]
-            xflux = self.data[x_id].data[0]
-            xwave = xwave[~np.isnan(xflux)]
-            xflux = xflux[~np.isnan(xflux)]
+        self.read_6dfgs_spectrum()
+        self.read_6dfgs_meta()
 
-            if self.clean == 1:
-                sky_id = id_finder(xwave, 5578)
-                xbridge = np.concatenate([xflux[sky_id-30:sky_id-15], xflux[sky_id+15:sky_id+30]])
-                xflux = np.concatenate([xflux[:sky_id-15], g_filt(xbridge, 5), xflux[sky_id+15:]])
-            self._spectrum = np.asarray([xwave, xflux])
+    def read_6dfgs_meta(self):
+        self.spectrum_name = self.data[7].header['TARGET']
+        self.redshift = self.data[7].header['Z']
 
-        return self._spectrum
+        xcoord = Coord(self.data[7].header['OBSRA'], self.data[7].header['OBSDEC'], self.coord_mode)
+        self.ra = xcoord.ra
+        self.dec = xcoord.dec
+
+        self._time = Datefs(self.data[5].header['MJDOBS_V'], 'mjd')
+        self.mjd = self._time.mjd
+
+    def read_6dfgs_spectrum(self, hdr_id: int = 7, clean_sky: bool = True):
+        """
+        Function calling to read the spectrum from the .fits file
+
+        Parameters:
+        -------------
+            hdr_id: int, Optional, default 7
+                Default value is the first instance of 6dFGS spectrum in file. Refer to headers
+            clean_sky: bool, Default True
+                If True, will mask the 5577AA skyline
+        """
+        self.hdr_id = hdr_id
+        xflux, xerr, xvar, xwave = self.data[hdr_id].data[0:4]
+        bool_notnan = ~np.isnan(xflux)
+        xwave = xwave[bool_notnan]
+        self.spectrum = np.asarray([xwave, xflux[bool_notnan]])
+        self.error = np.asarray([xwave, xerr[bool_notnan]])
+
+        xvar = xvar[bool_notnan]
+        xvar_empty = len(xvar[xvar > 0])
+        xvar_empty_size = len(xvar) - xvar_empty
+        xvar = np.concatenate([xvar[:xvar_empty], xvar[:xvar_empty_size]])
+        self.variance = np.asarray([xwave, xvar])
+
+        if clean_sky:
+            self.clean_sky()
 
     @property
     def specv(self):
         if self._specv is None:
             x_id = 5
-            xflux = self.data[x_id].data[0]
+            xflux = self.data[5].data[0]
             xwave = np.asarray([self.data[x_id].header['CRVAL1'] + i * self.data[x_id].header['CDELT1']
                                 for i in range(len(xflux))])
             xwave = xwave[~np.isnan(xflux)]
@@ -177,7 +190,7 @@ class SixDFGS(Spectrum):
     def specr(self):
         if self._specr is None:
             x_id = 6
-            xflux = self.data[x_id].data[0]
+            xflux = self.data[6].data[0]
             xwave = np.asarray([self.data[x_id].header['CRVAL1'] + i * self.data[x_id].header['CDELT1']
                                 for i in range(len(xflux))])
             xwave = xwave[~np.isnan(xflux)]
@@ -187,150 +200,68 @@ class SixDFGS(Spectrum):
 
         return self._specr
 
-    @property
-    def variance(self):
-        if self._variance is None:
-            x_id = self._spec_id
-            xwave = self.data[x_id].data[3]
-            xvar = self.data[x_id].data[2]
-            xflux = self.data[x_id].data[0]
-            xwave = xwave[~np.isnan(xflux)]
-            xvar = xvar[~np.isnan(xflux)]
-            xvar_empty = len(xvar[xvar > 0])
-            xvar_empty_size = len(xvar) - xvar_empty
-            xvar = np.concatenate([xvar[:xvar_empty], xvar[:xvar_empty_size]])
-            self._variance = np.asarray([xwave, xvar])
-        return self._variance
-
-    @property
-    def error(self):
-        x_id = self._spec_id
-        return np.asarray([self.data[x_id].data[3], self.data[x_id].data[1]])
-
-    @property
-    def time(self):
-        if self._time is None:
-            self._time = Datefs(self.data[5].header['MJDOBS_V'], 'mjd')
-        return self._time
-
-    @property
-    def mjd(self):
-        return self.time.mjd
-
-    @property
-    def redshift(self):
-        if self._redshift is None:
-            self._redshift = self.data[7].header['Z']
-        return self._redshift
-
-    @property
-    def ra(self):
-        if self._coord is None:
-            self._coord = Coord(self.data[7].header['OBSRA'], self.data[7].header['OBSDEC'], self.coord_mode)
-        if self._ra is None:
-            self._ra = self._coord.ra
-        return self._ra
-
-    @property
-    def dec(self):
-        if self._coord is None:
-            self._coord = Coord(self.data[7].header['OBSRA'], self.data[7].header['OBSDEC'], self.coord_mode)
-        if self._dec is None:
-            self._dec = self._coord.dec
-        return self._dec
-
-    @ra.setter
-    def ra(self, newra):
-        self._coord = Coord(newra, self.data[7].header['OBSDEC'], self.coord_mode)
-        self._ra = None
-
-    @dec.setter
-    def dec(self, newdec):
-        self._coord = Coord(self.data[7].header['OBSRA'], newdec, self.coord_mode)
-        self._dec = None
-
-    @property
-    def spec_id(self):
-        return self._spec_id
-
-    @spec_id.setter
-    def spec_id(self, new_id):
-        self._spec_id = new_id
-        self._spectrum = None
-
-    @property
-    def spectrum_name(self):
-        if self._spectrum_name is None:
-            self._spectrum_name = self.data[7].header['TARGET']
-        return self._spectrum_name
-
 
 # wifes subclass. A lot messier to get the spec out due to
 # it being two spectra, red and blue side
 class Wifes(Spectrum):
-    def __init__(self, filename_b, filename_r, clean_sky=1):
+    def __init__(self, filename_b: str, filename_r: str):
+        """
+        The class for calling WiFeS .p11 spectrum after processed by PyWiFeS
+
+        Parameters:
+        ---------------
+        filename_b: str
+            File path of the blue CCD spectrum. use blank string "" if not exist
+        filename_r: str
+            File path of the red CCD spectrum. use blank string "" if not exist
+        """
         super(Wifes, self).__init__()
+        self.rflux: np.array = None
+        self.bflux: np.array = None
+        self.rwave: np.array = None
+        self.bwave: np.array = None
+        self.coord_mode = 'DMS'
+        self._redshift = None
 
         # Extract the red
-        with fits.open(filename_r) as rdata:
-            # self._mjd_tmp = rdata[0].header['MJD-OBS']
-            # self.ra_tmp = rdata[0].header['RA']
-            # self.dec_tmp = rdata[0].header['DEC']
-            # self._spectrum_name = rdata[0].header['OBJECT']
-            self.rflux = rdata[0].data
-            self.rwave = np.linspace(5400, 9500, len(self.rflux))
-            self.clean = clean_sky
+        if filename_b != "" and filename_r != "":
+            with fits.open(filename_r) as rdata:
+                self.read_wifes_meta(rdata[0])
+                self.rwave, self.rflux = self.read_wifes_halfspec(rdata)
 
-        # Extract the blue
-        with fits.open(filename_b) as bdata:
-            self.bflux = bdata[0].data
-            self.bwave = np.linspace(3500, 5700, len(self.bflux))
+            # Extract the blue
+            with fits.open(filename_b) as bdata:
+                self.bwave, self.bflux = self.read_wifes_halfspec(bdata)
 
-        # These are properties to tweak the resulting spectrum
-        # Norm side determines which side to fix while we match-
-        # -the other to fit it
-        # Norm range is the range from the overlap center point-
-        # -we consider for normalisation
-        self._norm_side = 'R'
-        self._norm_range = [-20, 60]
-        self.spectrum_name = self._spectrum_name
-        self.coord_mode = 'DMS'
+            self.create_spectrum()
 
-    @property
-    def time(self):
-        if self._time is None:
-            self._time = Datefs(self._mjd_tmp, 'mjd')
-        return self._time
+        elif filename_b != "":
+            with fits.open(filename_b) as bdata:
+                self.read_wifes_meta(bdata[0])
+                self.bwave, self.bflux = self.read_wifes_halfspec(bdata)
+            self.spectrum = np.asarray([self.bwave, self.bflux])
 
-    @property
-    def mjd(self):
-        return self.time.mjd
+        elif filename_r != "":
+            with fits.open(filename_r) as rdata:
+                self.read_wifes_meta(rdata[0])
+                self.rwave, self.rflux = self.read_wifes_halfspec(rdata)
+            self.spectrum = np.asarray([self.rwave, self.rflux])
 
-    @property
-    def ra(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._ra is None:
-            self._ra = self._coord.coord_hms[0]
-        return self._ra
+    def read_wifes_meta(self, hdr_data: fits.header):
+        self.mjd = hdr_data.header['MJD-OBS']
+        self.ra = hdr_data.header['RA']
+        self.dec = hdr_data.header['DEC']
+        self.spectrum_name = hdr_data.header['OBJECT']
 
-    @property
-    def dec(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._dec is None:
-            self._dec = self._coord.coord_hms[1]
-        return self._dec
-
-    @ra.setter
-    def ra(self, newra):
-        self._coord = Coord(newra, self.dec_tmp, self.coord_mode)
-        self._ra = None
-
-    @dec.setter
-    def dec(self, newdec):
-        self._coord = Coord(self.ra_tmp, newdec, self.coord_mode)
-        self._dec = None
+    @staticmethod
+    def read_wifes_halfspec(hdr_data: fits.hdu) -> Tuple[np.array, np.array]:
+        xflux = np.asarray(hdr_data[0].data)
+        start_wave = hdr_data[0].header["CRVAL1"]
+        pix_wave = hdr_data[0].header["CDELT1"]
+        len_wave = hdr_data[0].header["NAXIS1"]
+        end_wave = start_wave + (len_wave - 1) * pix_wave
+        xwave = np.linspace(start_wave, end_wave, len_wave)
+        return xwave, xflux
 
     @property
     def redshift(self):
@@ -345,443 +276,43 @@ class Wifes(Spectrum):
     def redshift(self, redshift):
         self._redshift = redshift
 
-    @property
-    def fluxmult(self):
-        if self._fluxmult is None:
-            self._fluxmult = 1
-            return self._fluxmult
+    def create_spectrum(self, norm_side: str = 'R', norm_range: Tuple = (-20, 60), clean_sky: bool = True):
+        """
+        Main function to call for spectrum generation
+
+        Parameters:
+        ----------------
+        norm_side: str, Default "R"
+            If "R", still set the red CCD spectrum as the reference and shift the blue CCD spectrum to match.
+            If "B", vice versa
+        norm_range: tuple of two int, Default (-20, 60)
+            The range of numpy array ids to sample for the average flux to use for scaling/normalising the
+            blue or red CCD spectrum
+        clean_sky: bool, Default True
+            If True, removes the 5577AA skyline
+        """
+        # find the mid-point
+        br_mid = np.mean([self.rwave[0], self.bwave[-1]])
+        r_id = id_finder(self.rwave, br_mid)
+        b_id = id_finder(self.bwave, br_mid)
+
+        # Average across the norm_range to find a flux level that will be used as the normalisation
+        rnorm = np.mean(self.rflux[r_id - norm_range[0]:r_id + norm_range[1]])
+        bnorm = np.mean(self.bflux[b_id - norm_range[0]:b_id + norm_range[1]])
+
+        # Shifting one side to the other depending on Norm side
+        if norm_side in 'Rr':
+            bflux = self.bflux / bnorm * rnorm
+            rflux = self.rflux
+        elif norm_side in 'Bb':
+            rflux = self.rflux / rnorm * bnorm
+            bflux = self.bflux
         else:
-            return self._fluxmult
+            print("Incorrect norm_side argument, default to using redside (R)")
+            bflux = self.bflux / bnorm * rnorm
+            rflux = self.rflux
 
-    @fluxmult.setter
-    def fluxmult(self, fm):
-        self._fluxmult = fm
-        self._pspec = None
+        self.spectrum = merge([self.bwave, bflux], [self.rwave, rflux])
 
-    @property
-    def spectrum(self):
-        if self._spectrum is None:
-            # 5650 is the mid point for overlap in the spectra
-            r_id = id_finder(self.rwave, 5650)
-            b_id = id_finder(self.bwave, 5650)
-            # Average across the range to find a flux level
-            rnorm = np.mean(
-                self.rflux[r_id - self._norm_range[0]:r_id + self._norm_range[1]])
-            bnorm = np.mean(
-                self.bflux[b_id - self._norm_range[0]:b_id + self._norm_range[1]])
-
-            # Shifting one side to the other depending on Norm side
-            if self._norm_side in 'Rr':
-                bflux = self.bflux / bnorm * rnorm
-                rflux = self.rflux
-            elif self._norm_side in 'Bb':
-                rflux = self.rflux / rnorm * bnorm
-                bflux = self.bflux
-
-            if self.clean == 1:
-                sky_id = id_finder(self.bwave, 5578)
-                xbridge = np.concatenate([bflux[sky_id-50:sky_id-25], bflux[sky_id+25:sky_id+50]])
-                bflux = np.concatenate([bflux[:sky_id-25], g_filt(xbridge, 5), bflux[sky_id+25:]])
-
-                sky_id = id_finder(self.rwave, 5578)
-                xbridge = np.concatenate([rflux[sky_id-50:sky_id-25], rflux[sky_id+25:sky_id+50]])
-                rflux = np.concatenate([rflux[:sky_id-25], g_filt(xbridge, 5), rflux[sky_id+25:]])
-
-            self._spectrum = merge([self.bwave, bflux], [self.rwave, rflux])
-        return self._spectrum
-
-    @property
-    def norm_side(self):
-        return self._norm_side
-
-    @norm_side.setter
-    def norm_side(self, side='R'):
-        assert len(side) == 1 and side in 'RBrb', 'invalid norm side, only use R or B'
-        self._norm_side = side
-        self._spectrum = None
-
-    @property
-    def norm_range(self):
-        return self._norm_range
-
-    @norm_range.setter
-    def norm_range(self, newrange):
-        assert len(newrange) == 2 and newrange[1] > newrange[0], 'Invalid Norm Range. Ensure [min, max]'
-        self._norm_range = newrange
-        self._spectrum = None
-
-
-# wifes subclass. A lot messier to get the spec out due to
-# it being two spectra, red and blue side
-class WifesC(Spectrum):
-    def __init__(self, filename_b, filename_r, clean_sky=1):
-        super(WifesC, self).__init__()
-
-        # Extract the red
-        with fits.open(filename_r) as rdata:
-            # self._mjd_tmp = rdata[0].header['MJD-OBS']
-            # self.ra_tmp = rdata[0].header['RA']
-            # self.dec_tmp = rdata[0].header['DEC']
-            # self._spectrum_name = rdata[0].header['OBJECT']
-            self.rflux = rdata[0].data
-            self.rwave = np.linspace(5000, 9566, len(self.rflux))
-            self.clean = clean_sky
-
-        # Extract the blue
-        with fits.open(filename_b) as bdata:
-            self.bflux = bdata[0].data
-            if 'x' in filename_b:
-                self.bwave = np.linspace(3500, 5700, len(self.bflux))
-            else:
-                self.bwave = np.linspace(3000, 5700, len(self.bflux))
-
-        # These are properties to tweak the resulting spectrum
-        # Norm side determines which side to fix while we match-
-        # -the other to fit it
-        # Norm range is the range from the overlap center point-
-        # -we consider for normalisation
-        self._norm_side = 'R'
-        self._norm_range = [-20, 60]
-        self.spectrum_name = self._spectrum_name
-        self.coord_mode = 'DMS'
-
-    @property
-    def time(self):
-        if self._time is None:
-            self._time = Datefs(self._mjd_tmp, 'mjd')
-        return self._time
-
-    @property
-    def mjd(self):
-        return self.time.mjd
-
-    @property
-    def ra(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._ra is None:
-            self._ra = self._coord.coord_hms[0]
-        return self._ra
-
-    @property
-    def dec(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._dec is None:
-            self._dec = self._coord.coord_hms[1]
-        return self._dec
-
-    @ra.setter
-    def ra(self, newra):
-        self._coord = Coord(newra, self.dec_tmp, self.coord_mode)
-        self._ra = None
-
-    @dec.setter
-    def dec(self, newdec):
-        self._coord = Coord(self.ra_tmp, newdec, self.coord_mode)
-        self._dec = None
-
-    @property
-    def redshift(self):
-        if self._redshift is None:
-            print('Wifes has no redshift property.'
-                  'Please specify from 6dFGS or SDSS data')
-            pass
-        else:
-            return self._redshift
-
-    @redshift.setter
-    def redshift(self, redshift):
-        self._redshift = redshift
-
-    @property
-    def fluxmult(self):
-        if self._fluxmult is None:
-            self._fluxmult = 1
-            return self._fluxmult
-        else:
-            return self._fluxmult
-
-    @fluxmult.setter
-    def fluxmult(self, fm):
-        self._fluxmult = fm
-        self._pspec = None
-
-    @property
-    def spectrum(self):
-        if self._spectrum is None:
-            # 5650 is the mid point for overlap in the spectra
-            r_id = id_finder(self.rwave, 5650)
-            b_id = id_finder(self.bwave, 5650)
-            # Average across the range to find a flux level
-            rnorm = np.mean(
-                self.rflux[r_id - self._norm_range[0]:r_id + self._norm_range[1]])
-            bnorm = np.mean(
-                self.bflux[b_id - self._norm_range[0]:b_id + self._norm_range[1]])
-
-            # Shifting one side to the other depending on Norm side
-            if self._norm_side in 'Rr':
-                bflux = self.bflux / bnorm * rnorm
-                rflux = self.rflux
-            elif self._norm_side in 'Bb':
-                rflux = self.rflux / rnorm * bnorm
-                bflux = self.bflux
-
-            if self.clean == 1:
-                sky_id = id_finder(self.bwave, 5578)
-                xbridge = np.concatenate([bflux[sky_id-50:sky_id-25], bflux[sky_id+25:sky_id+50]])
-                bflux = np.concatenate([bflux[:sky_id-25], g_filt(xbridge, 5), bflux[sky_id+25:]])
-
-                sky_id = id_finder(self.rwave, 5578)
-                xbridge = np.concatenate([rflux[sky_id-50:sky_id-25], rflux[sky_id+25:sky_id+50]])
-                rflux = np.concatenate([rflux[:sky_id-25], g_filt(xbridge, 5), rflux[sky_id+25:]])
-
-            self._spectrum = merge([self.bwave, bflux], [self.rwave, rflux], -1)
-        return self._spectrum
-
-    @property
-    def norm_side(self):
-        return self._norm_side
-
-    @norm_side.setter
-    def norm_side(self, side='R'):
-        assert len(side) == 1 and side in 'RBrb', 'invalid norm side, only use R or B'
-        self._norm_side = side
-        self._spectrum = None
-
-    @property
-    def norm_range(self):
-        return self._norm_range
-
-    @norm_range.setter
-    def norm_range(self, newrange):
-        assert len(newrange) == 2 and newrange[1] > newrange[0], 'Invalid Norm Range. Ensure [min, max]'
-        self._norm_range = newrange
-        self._spectrum = None
-
-
-class Wifes460(Spectrum):
-    def __init__(self, filename_b, filename_r):
-        super(Wifes460, self).__init__()
-
-        # Extract the red
-        with fits.open(filename_r) as rdata:
-            # self._mjd_tmp = rdata[0].header['MJD-OBS']
-            # self.ra_tmp = rdata[0].header['RA']
-            # self.dec_tmp = rdata[0].header['DEC']
-            # self._spectrum_name = rdata[0].header['OBJECT']
-            self.rflux = rdata[0].data
-            self.rwave = np.linspace(5000, 9565, len(self.rflux))
-
-        # Extract the blue
-        with fits.open(filename_b) as bdata:
-            self.bflux = bdata[0].data
-            self.bwave = np.linspace(3000, 5700, len(self.bflux))
-
-        # These are properties to tweak the resulting spectrum
-        # Norm side determines which side to fix while we match-
-        # -the other to fit it
-        # Norm range is the range from the overlap center point-
-        # -we consider for normalisation
-        self._norm_side = 'R'
-        self._norm_range = [-20, 60]
-        self.spectrum_name = self._spectrum_name
-        self.coord_mode = 'DMS'
-
-    @property
-    def time(self):
-        if self._time is None:
-            self._time = Datefs(self._mjd_tmp, 'mjd')
-        return self._time
-
-    @property
-    def mjd(self):
-        return self.time.mjd
-
-    @property
-    def ra(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._ra is None:
-            self._ra = self._coord.coord_hms[0]
-        return self._ra
-
-    @property
-    def dec(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._dec is None:
-            self._dec = self._coord.coord_hms[1]
-        return self._dec
-
-    @ra.setter
-    def ra(self, newra):
-        self._coord = Coord(newra, self.dec_tmp, self.coord_mode)
-        self._ra = None
-
-    @dec.setter
-    def dec(self, newdec):
-        self._coord = Coord(self.ra_tmp, newdec, self.coord_mode)
-        self._dec = None
-
-    @property
-    def redshift(self):
-        if self._redshift is None:
-            print('Wifes has no redshift property.'
-                  'Please specify from 6dFGS or SDSS data')
-            pass
-        else:
-            return self._redshift
-
-    @redshift.setter
-    def redshift(self, redshift):
-        self._redshift = redshift
-
-    @property
-    def fluxmult(self):
-        if self._fluxmult is None:
-            self._fluxmult = 1
-            return self._fluxmult
-        else:
-            return self._fluxmult
-
-    @fluxmult.setter
-    def fluxmult(self, fm):
-        self._fluxmult = fm
-        self._pspec = None
-
-    @property
-    def spectrum(self):
-        if self._spectrum is None:
-            # 5650 is the mid point for overlap in the spectra
-            r_id = id_finder(self.rwave, 5350)
-            b_id = id_finder(self.bwave, 5350)
-            # Average across the range to find a flux level
-            rnorm = np.mean(
-                self.rflux[r_id - self._norm_range[0]:r_id + self._norm_range[1]])
-            bnorm = np.mean(
-                self.bflux[b_id - self._norm_range[0]:b_id + self._norm_range[1]])
-
-            # Shifting one side to the other depending on Norm side
-            if self._norm_side in 'Rr':
-                bflux = self.bflux / bnorm * rnorm
-                rflux = self.rflux
-            elif self._norm_side in 'Bb':
-                rflux = self.rflux / rnorm * bnorm
-                bflux = self.bflux
-
-            self._spectrum = merge([self.bwave, bflux], [self.rwave, rflux])
-        return self._spectrum
-
-    @property
-    def norm_side(self):
-        return self._norm_side
-
-    @norm_side.setter
-    def norm_side(self, side='R'):
-        assert len(side) == 1 and side in 'RBrb', 'invalid norm side, only use R or B'
-        self._norm_side = side
-        self._spectrum = None
-
-    @property
-    def norm_range(self):
-        return self._norm_range
-
-    @norm_range.setter
-    def norm_range(self, newrange):
-        assert len(newrange) == 2 and newrange[1] > newrange[0], 'Invalid Norm Range. Ensure [min, max]'
-        self._norm_range = newrange
-        self._spectrum = None
-
-
-class WifesR(Spectrum):
-    def __init__(self, filename_r):
-        super(WifesR, self).__init__()
-
-        # Extract the red
-        with fits.open(filename_r) as rdata:
-            self.rflux = rdata[0].data
-            self.rwave = np.linspace(5400, 9500, len(self.rflux))
-
-        # These are properties to tweak the resulting spectrum
-        # Norm side determines which side to fix while we match-
-        # -the other to fit it
-        self.spectrum_name = self._spectrum_name
-        self.coord_mode = 'DMS'
-
-    @property
-    def time(self):
-        if self._time is None:
-            self._time = Datefs(self._mjd_tmp, 'mjd')
-        return self._time
-
-    @property
-    def mjd(self):
-        return self.time.mjd
-
-    @property
-    def ra(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._ra is None:
-            self._ra = self._coord.coord_hms[0]
-        return self._ra
-
-    @property
-    def dec(self):
-        if self._coord is None:
-            self._coord = Coord(self.ra_tmp, self.dec_tmp, self.coord_mode)
-        if self._dec is None:
-            self._dec = self._coord.coord_hms[1]
-        return self._dec
-
-    @ra.setter
-    def ra(self, newra):
-        self._coord = Coord(newra, self.dec_tmp, self.coord_mode)
-        self._ra = None
-
-    @dec.setter
-    def dec(self, newdec):
-        self._coord = Coord(self.ra_tmp, newdec, self.coord_mode)
-        self._dec = None
-
-    @property
-    def redshift(self):
-        if self._redshift is None:
-            print('Wifes has no redshift property.'
-                  'Please specify from 6dFGS or SDSS data')
-            pass
-        else:
-            return self._redshift
-
-    @redshift.setter
-    def redshift(self, redshift):
-        self._redshift = redshift
-
-    @property
-    def fluxmult(self):
-        if self._fluxmult is None:
-            self._fluxmult = 1
-            return self._fluxmult
-        else:
-            return self._fluxmult
-
-    @fluxmult.setter
-    def fluxmult(self, fm):
-        self._fluxmult = fm
-        self._pspec = None
-
-    @property
-    def spectrum(self):
-        if self._spectrum is None:
-            self._spectrum = [self.rwave, self.rflux]
-        return self._spectrum
-
-
-'''
-ss = SDSSspec('Data/spec-0698-52203-0114.fits')
-fgs = SixDFGS('Data/g0040392-371317.fits')
-wfs = Wifes('Data/sp_33b.fits', 'Data/sp_33r.fits')
-plt.plot(*wfs.spectrum)
-plt.ion()
-'''
+        if clean_sky == 1:
+            self.clean_sky()

@@ -3,27 +3,6 @@ import datetime
 import argparse
 from math import floor
 
-parser = argparse.ArgumentParser(description="This is a script that converts date formats",
-                                 usage="name_of_script -d <date> -i <format_in> -o <format_out>")
-
-# argument: files to process
-parser.add_argument("-d", "--date",
-                    default="57205",
-                    type=str,
-                    help="Input the date in any format. Dates should be strings delimited with '-'")
-
-parser.add_argument("-i", "--informat",
-                    default="mjd",
-                    type=str,
-                    help="The format of the input date")
-
-parser.add_argument("-o", "--outformat",
-                    default="decyr",
-                    type=str,
-                    help="The format of the output date")
-
-args = parser.parse_args()
-
 
 class Datefs(object):
     def __init__(self, date=57205, informat='mjd'):
@@ -115,6 +94,28 @@ class Datefs(object):
 
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="This is a script that converts date formats",
+                                     usage="name_of_script -d <date> -i <format_in> -o <format_out>")
+
+    # argument: files to process
+    parser.add_argument("-d", "--date",
+                        default="57205",
+                        type=str,
+                        help="Input the date in any format. Dates should be strings delimited with '-'")
+
+    parser.add_argument("-i", "--informat",
+                        default="mjd",
+                        type=str,
+                        help="The format of the input date")
+
+    parser.add_argument("-o", "--outformat",
+                        default="decyr",
+                        type=str,
+                        help="The format of the output date")
+
+    args = parser.parse_args()
+
     if "-" not in args.date:
         date_input = float(args.date)
     else:
