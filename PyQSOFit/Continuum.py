@@ -237,8 +237,8 @@ class ContiFit:
             conti_fit = minimize(self._residuals, ini_fit.params,
                                  args=(self.twave, flux_resampled, self.terr), calc_covar=False)
             params_dict = conti_fit.params.valuesdict()
-            params_mc = list(params_dict.values())
-            samples[k] = params_mc
+            samples[k] = list(params_dict.values())
+
         self.fparams_samples = samples
 
     def _L_conti(self, pp, z):

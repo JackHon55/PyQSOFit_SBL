@@ -384,7 +384,7 @@ class QSOFit:
                                  MC_conti=MC_conti, n_trails=n_trails)
         self.lineobj = None
         if linefit:
-            self.lineobj = LineFit()
+            self.lineobj = LineFit(n_trails=n_trails)
 
         # get the source name in plate-mjd-fiber, if no then None
         if name is None:
@@ -771,31 +771,6 @@ class QSOFit:
 
         return np.concatenate([comp_result_name, gauss_name.flatten()])
 
-    def _DoLineFit_linefitting(self, section: SectionParameters) -> list:
-        """Runs the line fitting for a section and the MC if called"""
-        print(self.linelist['compname'][section.line_indices][0])
-        all_para_std = np.asarray([])
-        fwhm_std = np.asarray([])
-        fwhm_lines = []
-
-        # call kmpfit for lines
-        line_fit = self._do_line_kmpfit(section)
-
-        # calculate FWMH for each fitted components
-        for xx in np.split(line_fit.params, len(self.linelist['compname'][section.line_indices])):
-            fwhm_lines.append(self.line_property(xx).fwhm)
-        fwhm_lines = np.asarray(fwhm_lines)
-
-        # Perform MC for error calculation
-        if self.MC and self.n_trails > 0:
-            MCwave = np.log(self.wave[section.section_indices])
-            MCflux = self.line_flux[section.section_indices]
-            MCerr = self.err[section.section_indices]
-            MCargs = (MCwave, MCflux, MCerr, self.line_fit.params, self.line_fit_par, self.n_trails,
-                      section.line_indices)
-            all_para_std, fwhm_std = self._line_mc(*MCargs)
-
-        return [line_fit, all_para_std, fwhm_lines, fwhm_std]
 
     def _DoLineFit(self):
         linelist = fits.open(self.path + 'qsopar2.fits')[1].data
@@ -804,6 +779,8 @@ class QSOFit:
 
         # define arrays for result taking
         self.all_comp_range = self.lineobj.all_comp_range
+        self.lineobj.fit_all()
+
 
     # line function-----------
     def _DoLineFit2(self):
@@ -853,53 +830,6 @@ class QSOFit:
         self.line_result_name = np.concatenate(line_result_name)
         return self.line_result, self.line_result_name
 
-
-    # ---------MC error for emission line parameters-------------------
-    '''def _line_mc(self, x, line_to_fit, err, pp0, pp_limits, n_trails, ind_line) -> Tuple[np.array, np.array]:
-        """calculate the Monte Carlo error of line parameters"""
-        all_pp_1comp = np.zeros(len(pp0) * n_trails).reshape(len(pp0), n_trails)
-        all_pp_std = np.zeros(len(pp0))
-        all_fwhm = []
-        all_peak = []
-
-        rms_line = line_to_fit - manygauss(x, pp0)
-        noise = self.noise_calculator(rms_line)
-
-        print(n_trails)
-        for trail in range(n_trails):
-            mc_start = timeit.default_timer()
-
-            # randomly vary line to fit with noise
-            ctm_pts = np.concatenate([np.random.choice(len(noise), int(len(noise) / 24))])
-            ctm_noise = np.random.normal(rms_line[ctm_pts], noise[ctm_pts])
-            ctm_poly = np.poly1d(np.polyfit(x[ctm_pts], ctm_noise, 3))
-            line_to_fit += ctm_poly(x)
-
-            # refit randomly varied line to fit with parameters of the fitted model
-            line_fit = kmpfit.Fitter(residuals=self._residuals_line, data=(x, line_to_fit, err, ind_line), maxiter=50)
-            line_fit.parinfo = pp_limits
-            line_fit.fit(params0=pp0)
-            line_fit.params = self.newpp
-            all_pp_1comp[:, trail] = line_fit.params
-            mc_end = timeit.default_timer()
-            print('Fitting ', trail, ' mc in : ' + str(np.round(mc_end - mc_start)) + 's')
-
-            # further line properties
-            for xcomponent in np.split(line_fit.params, len(self.linelist['compname'][ind_line])):
-                xproperty = self.line_property(xcomponent)
-                all_fwhm.append(xproperty.fwhm)
-                all_peak.append(xproperty.peak)
-
-        # Calculate standard deviation for each property of each line
-        fwhm_std = 1.4826 * mad(np.split(np.asarray(all_fwhm), n_trails), 0)
-        peak_std = 1.4826 * mad(np.split(np.asarray(all_peak), n_trails), 0)
-
-        for st in range(len(pp0)):
-            all_pp_std[st] = 1.4826 * mad(all_pp_1comp[st, :])
-            if (st - 1) % 5 == 0:
-                all_pp_std[st] = peak_std[int(st / 5)]
-
-        return all_pp_std, fwhm_std'''
 
     def _line_fwhm(self, xx: np.array, yy: np.array, centroid: float) -> float:
         """Creates a generator of the model shifted down in y-axis by half to find FWHM"""
@@ -997,54 +927,6 @@ class QSOFit:
         peak = single_peak if n_gauss == 1 else self._line_peak(n_gauss, pp, xx)
 
         return LineProperties((fwhm, sigma, skew, ew, peak, area))
-
-    def _lineflux_link(self, pp: np.array, line_indicies: np.array) -> None:
-        """rescale the height of fitted line if height/flux is linked to another line"""
-        for line_index, line_flux in enumerate(self.linelist['fvalue'][line_indicies]):
-            if '*' in line_flux:
-                input_flux = line_flux.split('*')
-                link_index = np.where(self.linelist['linename'][line_indicies] == input_flux[0])[0]
-                flux_target = self.linelist['lambda'][line_indicies][link_index]
-                flux_now = self.linelist['lambda'][line_indicies][line_index]
-
-                # If component is less than linked component but should be greater, set to boundary
-                if '>' in input_flux[1][0] and pp[5 * line_index] < pp[5 * link_index] * float(input_flux[1][1:]):
-                    pp[5 * line_index] = pp[5 * link_index] * float(input_flux[1][1:]) / flux_target * flux_now
-
-                # If component is greater than linked component but should be less, set to boundary
-                elif '<' in input_flux[1][0] and pp[5 * line_index] > pp[5 * link_index] * float(input_flux[1][1:]):
-                    pp[5 * line_index] = pp[5 * link_index] * float(input_flux[1][1:]) / flux_target * flux_now
-
-                # If component set exactly to be a multiplier of the linked component, scale it to multiplier
-                elif input_flux[1][0] not in '<>':
-                    pp[5 * line_index] = pp[5 * link_index] * float(input_flux[1]) / flux_target * flux_now
-
-    def _lineprofile_link(self, pp: np.array, line_indicies: np.array) -> None:
-        """reset the sigma, skew, velocity offset, and gamma of component to linked component"""
-        for line_index, line_sigma in enumerate(self.linelist['sigval'][line_indicies]):
-            if '*' in line_sigma:
-                input_sigma = line_sigma.split('*')
-                link_index = np.where(self.linelist['linename'][line_indicies] == input_sigma[0])[0]
-                sigma_target = self.linelist['lambda'][line_indicies][link_index]
-                sigma_now = self.linelist['lambda'][line_indicies][line_index]
-
-                pp[5 * line_index + 1] = np.log(np.exp(pp[5 * link_index + 1]) / sigma_target * sigma_now)
-                pp[5 * line_index + 2] = pp[5 * link_index + 2]
-                pp[5 * line_index + 3] = pp[5 * link_index + 3]
-                pp[5 * line_index + 4] = pp[5 * link_index + 4]
-
-    def _residuals_line(self, pp: np.array, data: Tuple[np.array, np.array, np.array, np.array]) -> np.array:
-        """The line residual function used in kmpfit"""
-        xval, yval, weight, ind_line = data
-
-        # Compute line linking prior to residual calculation
-        self._lineflux_link(pp, ind_line)
-        self._lineprofile_link(pp, ind_line)
-
-        # restore parameters
-        self.newpp = pp.copy()
-
-        return (yval - manygauss(xval, pp)) / weight
 
     @staticmethod
     def _SaveResult(conti_result, conti_result_name, fe_op_result, fe_op_names, line_result,
