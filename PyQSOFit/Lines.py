@@ -1,10 +1,13 @@
 import numpy as np
+from keras.src.ops import dtype
 from lmfit import minimize, Parameters
 from typing import Tuple
 from astropy import units as u
 from astropy import constants as const
 from scipy import interpolate
 from scipy.stats import median_abs_deviation as mad
+from tensorflow.python.ops.numpy_ops.np_arrays import ndarray
+
 from Spectra_handling.Spectrum_utls import skewed_voigt
 import sys
 
@@ -246,7 +249,6 @@ class LineFit:
             line_fit = minimize(self.residuals_line, self.iparams, args=lmpargs, calc_covar=False)
             self.fparams = self.tmpparams
             self.gauss_line = manygauss(np.log(self.twave), self.fparams)
-
             if self.MC and self.n_trails > 0:
                 self.mc_fit(line_fit, conti)
 
@@ -396,23 +398,25 @@ class LineFit:
         @property
         def fwhms_error(self) -> np.array:
             if self._fwhms_error is None:
-                fwhm_samples = np.empty(self.n_trails)
-                peak_samples = np.empty(self.n_trails)
+                fwhm_err = np.empty(self.n_trails, dtype=float)
+                peak_err = np.empty(self.n_trails, dtype=float)
                 for i, pp in enumerate(self.fparams_samples):
-                    fwhm_samples[i], peak_samples[i] = self._calculate_FWHM_peak(pp)
-                self._fwhms_error = 1.4826 * mad(fwhm_samples, 0)
-                self._peaks_error = 1.4826 * mad(peak_samples, 0)
+                    fwhm_s, peak_s = self._calculate_FWHM_peak(pp)
+                    fwhm_err[i] = 1.4826 * mad(fwhm_s, 0)
+                    peak_err[i] = 1.4826 * mad(peak_s, 0)
+                self._fwhms_error, self._peaks_error = fwhm_err, peak_err
             return self._fwhms_error
 
         @property
         def peaks_error(self) -> np.array:
             if self._peaks_error is None:
-                fwhm_samples = np.empty(self.n_trails)
-                peak_samples = np.empty(self.n_trails)
+                fwhm_err = np.empty(self.n_trails, dtype=float)
+                peak_err = np.empty(self.n_trails, dtype=float)
                 for i, pp in enumerate(self.fparams_samples):
-                    fwhm_samples[i], peak_samples[i] = self._calculate_FWHM_peak(pp)
-                self._fwhms_error = 1.4826 * mad(fwhm_samples, 0)
-                self._peaks_error = 1.4826 * mad(peak_samples, 0)
+                    fwhm_s, peak_s = self._calculate_FWHM_peak(pp)
+                    fwhm_err[i] = 1.4826 * mad(fwhm_s, 0)
+                    peak_err[i] = 1.4826 * mad(peak_s, 0)
+                self._fwhms_error, self._peaks_error = fwhm_err, peak_err
             return self._peaks_error
 
         @property
@@ -430,13 +434,15 @@ class LineFit:
             if self._fitting_result is not None:
                 return self._fitting_result
             params = np.split(self.fparams, self.n_line)
-            values = np.asarray([np.concatenate([[self.fwhms[i]], j]) for i, j in enumerate(params)])
+            values = np.concatenate([np.concatenate([[self.fwhms[i]], j]) for i, j in enumerate(params)])
 
             self._fitting_result = values
 
             if self.MC and self.n_trails > 0:
-                errors = np.asarray([np.concatenate([[self.fwhms_error[i]], j])
-                                     for i, j in enumerate(self.fparams_errors)])
+                e_params = np.split(self.fparams_errors, self.n_line)
+                errors = np.concatenate([np.concatenate([[self.fwhms_error[i]], j])
+                                     for i, j in enumerate(e_params)])
+
                 self._fitting_result = array_interlace(values, errors)
 
             return self._fitting_result
@@ -448,8 +454,8 @@ class LineFit:
 
             gauss_property = ['fwhm', 'scale', 'centerwave', 'sigma', 'skewness', 'gamma']
             line_names = np.array(self.tlinelist['linename'])
-            names = np.array([[f"{lnames}_{xproperty}" for xproperty in gauss_property]
-                              for lnames in line_names], dtype='U50')
+            names = np.concatenate([[f"{lnames}_{xproperty}" for xproperty in gauss_property]
+                                    for lnames in line_names], dtype='U50')
             self._fitting_res_name = names
 
             if self.MC and self.n_trails > 0:
@@ -471,6 +477,8 @@ class LineProperties:
         self.wave, self.line_profile = self.line_model_compute(wave)
 
         self._area, self._ew = None, None
+        xkeys = ['fwhm', 'sigma', 'skewness', 'EW', 'Peak', 'Area']
+        self._err_list = np.zeros_like(xkeys)
 
     def line_gaussian_pp(self):
         """Extracts centroid, sigma, and skew parameters from the input array."""
@@ -517,6 +525,26 @@ class LineProperties:
         area = np.trapz(yy[valid_indices], x=xx[valid_indices])
         ew = area / np.mean(ff(xx[valid_indices]))
         return area, ew
+
+    def line_error_calculate(self, name_id: list, err_id: list,
+                             line_res: np.array, conti_res: np.array) -> np.array:
+        """Perform basic error analysis calculations of the line"""
+        scale = float(line_res[name_id[1]])
+
+        if conti_res[7] != 0:
+            conti_error = conti_res[8] / conti_res[7]
+        else:
+            conti_error = 0
+
+        err_peak = float(line_res[err_id[2]])
+        err_sig = self.sigma * float(err_id[0]) / self.fwhm
+        err_fwhm = float(line_res[err_id[0]])
+        err_skw = -999 if self.skew == -999 else float(line_res[err_id[4]])
+        err_scale = float(line_res[err_id[1]])
+        err_area = self.area * np.sqrt((err_scale / scale) ** 2 + (err_fwhm / self.fwhm) ** 2)
+        err_ew = self.ew * np.sqrt(conti_error ** 2 + (err_area / self.area) ** 2)
+
+        self._err_list = np.array([err_fwhm, err_sig, err_skw, err_ew, err_peak, err_area])
 
     @property
     def skew(self):
@@ -586,3 +614,21 @@ class LineProperties:
         if self._ew is None:
             self._area, self._ew = self.line_flux_ew()
         return self._ew
+
+    @property
+    def list(self):
+        return np.array([self.fwhm, self.sigma, self.skew, self.ew, self.peak, self.area])
+
+    @property
+    def dict(self):
+        xkeys = ['fwhm', 'sigma', 'skew', 'ew', 'peak', 'area']
+        return {i: j for i, j in zip(xkeys, self.list)}
+
+    @property
+    def err_list(self):
+        return self._err_list
+
+    @property
+    def err_dict(self):
+        xkeys = ['fwhm', 'sigma', 'skew', 'ew', 'peak', 'area']
+        return {i: j for i, j in zip(xkeys, self.err_list)}

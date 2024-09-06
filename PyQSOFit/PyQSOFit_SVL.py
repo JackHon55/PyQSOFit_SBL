@@ -23,7 +23,7 @@ from typing import Tuple
 
 from Spectra_handling.Spectrum_utls import skewed_voigt, blueshifting
 from PyQSOFit.Continuum import ContiFit
-from PyQSOFit.Lines import LineFit
+from PyQSOFit.Lines import LineFit, LineProperties
 from scipy.stats import median_abs_deviation as mad
 from lmfit import minimize, Parameters, report_fit
 from extinction import fitzpatrick99, remove
@@ -88,20 +88,6 @@ def manygauss(xval, pp):
         for i in range(ngauss):
             yval = yval + onegauss(xval, pp[i * 5:(i + 1) * 5])
         return yval
-
-
-class LineProperties:
-    """Class to hold the PyQSOFit output property for a line"""
-
-    def __init__(self, properties: Tuple = (0, 0, 0, 0, 0, 0)):
-        self.fwhm = properties[0]
-        self.sigma = properties[1]
-        self.skew = properties[2]
-        self.ew = properties[3]
-        self.peak = properties[4]
-        self.area = properties[5]
-        self.list = {'fwhm': self.fwhm, 'sigma': self.sigma, 'skew': self.skew,
-                     'ew': self.ew, 'peak': self.peak, 'area': self.area}
 
 
 class QSOFit:
@@ -384,7 +370,7 @@ class QSOFit:
                                  MC_conti=MC_conti, n_trails=n_trails)
         self.lineobj = None
         if linefit:
-            self.lineobj = LineFit(n_trails=n_trails)
+            self.lineobj = LineFit(MC=MC, n_trails=n_trails)
 
         # get the source name in plate-mjd-fiber, if no then None
         if name is None:
@@ -735,109 +721,11 @@ class QSOFit:
         self.lineobj.fit_all(self.line_flux, self.err, self.f_conti_model)
 
         self.gauss_result = np.concatenate(self.lineobj.gauss_result)
-        self.gauss_line = manygauss(self.wave, self.gauss_result)
+        self.gauss_line = manygauss(np.log(self.wave), self.gauss_result)
         self.line_result = np.concatenate(self.lineobj.line_result).flatten()
         self.line_result_name = np.concatenate(self.lineobj.line_result_name).flatten()
 
         return self.line_result, self.line_result_name
-
-
-    def _line_fwhm(self, xx: np.array, yy: np.array, centroid: float) -> float:
-        """Creates a generator of the model shifted down in y-axis by half to find FWHM"""
-        if np.max(yy) > 0:
-            spline = interpolate.UnivariateSpline(xx, yy - np.max(yy) / 2, s=0)
-        else:
-            spline = interpolate.UnivariateSpline(xx, yy - np.min(yy) / 2, s=0)
-
-        if len(spline.roots()) > 0:
-            fwhm_left, fwhm_right = spline.roots().min(), spline.roots().max()
-            return abs(fwhm_left - fwhm_right) / centroid * self.c
-        else:
-            return -999
-
-    def _line_gaussian_pp(self, pp: np.array, n_gauss: int) -> Tuple[np.array, np.array, np.array]:
-        """Extracts centroid, sigma, and skew parameters from the input array."""
-        cen = np.zeros(n_gauss)  # centroid array of line
-        sig = np.zeros(n_gauss)  # sigma array of line
-        skw = np.zeros(n_gauss)  # skew array of lines
-
-        for i in range(n_gauss):
-            cen[i] = pp[5 * i + 1]
-            sig[i] = pp[5 * i + 2]
-            skw[i] = pp[5 * i + 3]
-
-        return cen, sig, skw
-
-    def _line_model_compute(self, pp: np.array) -> Tuple[np.array, np.array]:
-        """Computes the wavelength and corresponding spectrum values."""
-        disp = np.diff(self.wave)[0]
-        left = self.wave.min()
-        right = self.wave.max()
-        xx = np.arange(left, right, disp)
-        xlog = np.log(xx)
-        yy = manygauss(xlog, pp)
-        return xx, yy
-
-    def _line_flux_ew(self, xx: np.array, yy: np.array) -> Tuple[float, float]:
-        """Calculates the total broad line flux and equivalent width (EW)."""
-        ff = interpolate.interp1d(self.wave, self.f_conti_model, bounds_error=False, fill_value=0)
-        valid_indices = yy > 0.01 * np.amax(yy)
-        area = np.trapz(yy[valid_indices], x=xx[valid_indices])
-        ew = area / np.mean(ff(xx[valid_indices]))
-        return area, ew
-
-    def _line_sigma(self, pp: np.array, cen: np.array, xx: np.array) -> float:
-        """Calculates the line sigma in normal wavelength."""
-        disp = np.diff(self.wave)[0]
-        xlog = np.log(xx)
-        lambda0 = 0.
-        lambda1 = 0.
-        lambda2 = 0.
-
-        for lm in range(int((xx.max() - xx.min()) / disp)):
-            gauss_val = manygauss(xlog[lm], pp)
-            lambda0 += gauss_val * disp * xx[lm]
-            lambda1 += xx[lm] * gauss_val * disp * xx[lm]
-            lambda2 += xx[lm] ** 2 * gauss_val * disp * xx[lm]
-
-        sigma = np.sqrt(lambda2 / lambda0 - (lambda1 / lambda0) ** 2) / np.exp(np.mean(cen)) * self.c
-        return sigma
-
-    def _line_peak(self, n_gauss: int, pp: np.array, xx: np.array):
-        peaks = np.empty((n_gauss,))
-        areas = np.empty((n_gauss,))
-        xlog = np.log(xx)
-
-        for xline in range(n_gauss):
-            xprofile = onegauss(xlog, np.split(pp, n_gauss)[xline])
-            peaks[xline] = xx[np.argmax(abs(xprofile))]
-            valid_indices = xprofile > 0.01 * np.amax(xprofile)
-            areas[xline] = np.trapz(xprofile[valid_indices], x=xx[valid_indices])
-
-        return np.average(peaks, weights=areas)
-
-    # -----line properties calculation function--------
-    def line_property(self, pp: np.array) -> LineProperties:
-        """
-        Calculate the further results for the broad component in emission lines, e.g., FWHM, sigma, peak, line flux
-        """
-        pp = pp.astype(float)
-        n_gauss = int(len(pp) / 5)
-
-        if n_gauss == 0:
-            return LineProperties((0., 0., 0., 0., 0., 0.))
-
-        cen, sig, skw = self._line_gaussian_pp(pp, n_gauss)
-
-        skew = -999 if n_gauss > 1 else np.mean(skw)
-        xx, yy = self._line_model_compute(pp)
-        fwhm = self._line_fwhm(xx, yy, np.exp(np.mean(cen)))  # Calculate FWHM, -999 if error
-        area, ew = self._line_flux_ew(xx, yy)
-        sigma = self._line_sigma(pp, cen, xx)
-        single_peak = xx[np.argmax(abs(yy))]
-        peak = single_peak if n_gauss == 1 else self._line_peak(n_gauss, pp, xx)
-
-        return LineProperties((fwhm, sigma, skew, ew, peak, area))
 
     @staticmethod
     def _SaveResult(conti_result, conti_result_name, fe_op_result, fe_op_names, line_result,
@@ -851,28 +739,14 @@ class QSOFit:
 
     def _plotSubPlot_Elines(self, arr_conti: np.array) -> None:
         """Plotting emission lines onto main spectrum figure"""
-        if self.MC:
-            for p in range(int(len(self.line_result) / 12)):
-                if self.line_result[6 * (p - 1) + 12] < 1200.:
-                    color = 'g'
-                else:
-                    color = 'r'
-                gauss_line = manygauss(np.log(self.wave), self.line_result[::2][p * 6:(p + 1) * 6][1:])
+        for xsec in self.lineobj.arr_section:
+            for xfwhm, xpp in zip(xsec.fwhms, np.split(xsec.fparams, xsec.n_line)):
+                color = 'g' if xfwhm < 1200 else 'r'
+                gauss_line = manygauss(np.log(self.wave), xpp)
                 plt.plot(self.wave, gauss_line + arr_conti, color=color)
-            total_param = np.delete(self.line_result[::2], np.arange(0, self.line_result[::2].size, 6))
 
-        else:
-            for p in range(int(len(self.line_result) / 6)):
-                if self.line_result[6 * (p - 1) + 6] < 1200.:
-                    color = 'g'
-                else:
-                    color = 'r'
-                gauss_line = manygauss(np.log(self.wave), self.line_result[p * 6:(p + 1) * 6][1:])
-                plt.plot(self.wave, gauss_line + arr_conti, color=color)
-            total_param = np.delete(self.line_result, np.arange(0, self.line_result.size, 6))
 
-        total_gauss_line = manygauss(np.log(self.wave), total_param)
-        plt.plot(self.wave, total_gauss_line + arr_conti, 'b', label='line', lw=2)
+        plt.plot(self.wave, self.gauss_line + arr_conti, 'b', label='line', lw=2)
 
     def _plotSubPlot_Main(self, linefit: bool) -> None:
         """Plotting the main spectrum figure"""
@@ -1041,25 +915,6 @@ class QSOFit:
 
         return name_id, err_id
 
-    def line_error_calculate(self, name_id: list, err_id: list, property_values: LineProperties) -> LineProperties:
-        """Perform basic error analysis calculations of the line"""
-        scale = float(self.line_result[name_id[1]])
-
-        if self.conti_result[7] != 0:
-            conti_error = self.conti_result[8] / self.conti_result[7]
-        else:
-            conti_error = 0
-
-        err_peak = float(self.line_result[err_id[2]])
-        err_sig = property_values.sigma * float(err_id[0]) / property_values.fwhm
-        err_fwhm = float(self.line_result[err_id[0]])
-        err_skw = -999 if property_values.skew == -999 else float(self.line_result[err_id[4]])
-        err_scale = float(self.line_result[err_id[1]])
-        err_area = property_values.area * np.sqrt((err_scale / scale) ** 2 + (err_fwhm / property_values.fwhm) ** 2)
-        err_ew = property_values.ew * np.sqrt(conti_error ** 2 + (err_area / property_values.area) ** 2)
-
-        return LineProperties((err_fwhm, err_sig, err_skw, err_ew, err_peak, err_area))
-
     def line_result_output(self, line_name: str, to_print: bool = False) -> np.array:
         """Compile errors of specified line to output as an array or print neatly"""
         # name_id and err_id follows the name order as in properties list, repeating every 6 element
@@ -1067,27 +922,25 @@ class QSOFit:
         name_id, err_id = self.line_errordata_read(line_name)
         if len(name_id) == 0:
             print(f"{line_name} not fitted")
-            return np.asarray([LineProperties().list, LineProperties().list])
+            return np.zeros((2, len(properties)))
 
         # Calculate values and errors for each property
-        property_values = self.line_property(self.line_result[name_id])
+        property_values = LineProperties(self.wave, self.line_result[name_id], self.f_conti_model)
 
         if self.MC:
-            property_errors = self.line_error_calculate(name_id, err_id, property_values)
-        else:
-            property_errors = LineProperties()
+            property_values.line_error_calculate(name_id, err_id, self.line_result, self.conti_result)
 
         if to_print:
             print('----------------------------------------------')
             print(line_name + ' data')
             for k in range(0, len(properties)):
-                print_values = list(property_values.list.values())
-                print_errors = list(property_errors.list.values())
+                print_values = property_values.list
                 print((properties[k] + '               ')[:15] + ':', '\t', np.round(print_values[k], 5))
                 if self.MC:
+                    print_errors = property_values.err_list
                     print((properties[k] + '_err           ')[:15] + ':', '\t', np.round(print_errors[k], 5))
 
-        return np.asarray([property_values.list, property_errors.list])
+        return np.asarray([property_values.dict, property_values.err_dict])
 
     @staticmethod
     def array_interlace(array1: np.array, array2: np.array) -> np.array:
