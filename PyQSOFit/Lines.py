@@ -1,10 +1,8 @@
 import numpy as np
 from lmfit import minimize, Parameters
 from typing import Tuple
-from astropy.cosmology import FlatLambdaCDM
 from astropy import units as u
 from astropy import constants as const
-from astropy.modeling.physical_models import BlackBody
 from scipy import interpolate
 from scipy.stats import median_abs_deviation as mad
 from Spectra_handling.Spectrum_utls import skewed_voigt
@@ -44,7 +42,7 @@ def onegauss(xval, pp):
 
 def manygauss(xval, pp):
     """The multi-Gaussian model used to fit the emission lines, it will call the onegauss function"""
-    ngauss = int(pp.shape[0] / 5)
+    ngauss = int(len(pp) / 5)
     if ngauss != 0:
         yval = 0.
         for i in range(ngauss):
@@ -141,7 +139,6 @@ class InitialProfileParameters:
 
 class LineFit:
     def __init__(self, MC: bool = False, n_trails: int = 0):
-        self.gauss_line = None
         self.linelist = None
         self.wave, self.flux, self.err = None, None, None
         self.ncomp = 0
@@ -152,6 +149,7 @@ class LineFit:
         self.n_trails = n_trails
 
         self.gauss_line = None
+        self.gauss_result = None
         self.line_result_name = None
         self.line_result = None
 
@@ -164,27 +162,28 @@ class LineFit:
         uniq_linecomp, uniq_ind = np.unique(self.linelist['compname'][fitted_section_index], return_index=True)
         self.uniq_linecomp_sort = uniq_linecomp[self.linelist['lambda'][fitted_section_index][uniq_ind].argsort()]
 
-    def initialise(self, linelist):
+    def initialise(self, linelist: np.array, wave: np.array):
         self.linelist = linelist
+        self.wave = wave
         self._DoLineFit_sectiondefinitions()
         self.ncomp = len(self.uniq_linecomp_sort)
         if self.ncomp == 0:
             print("No line to fit! Please set Line_fit to FALSE or enlarge wave_range!")
             return None
 
-        self.arr_section = np.empty(self.ncomp)
-        self.arr_fitted = np.empty(self.ncomp)
+        self.arr_section = np.empty(self.ncomp, dtype=self.SectionFit)
+        self.arr_fitted = np.empty(self.ncomp, dtype=bool)
         for xsec in range(self.ncomp):
             self.arr_section[xsec] = self.SectionFit(self.wave, self.linelist,
                                                      self.uniq_linecomp_sort[xsec], self.MC, self.n_trails)
             self.arr_fitted[xsec] = False
 
-        self.gauss_line = np.empty(self.ncomp, dtype=list)
-        self.line_result = np.empty(self.ncomp, dtype=list)
-        self.line_result_name = np.empty(self.ncomp, dtype=list)
+        self.gauss_result = np.empty(self.ncomp, dtype=np.ndarray)
+        self.line_result = np.empty(self.ncomp, dtype=np.ndarray)
+        self.line_result_name = np.empty(self.ncomp, dtype=np.ndarray)
 
-    def fit_all(self, wave, flux, err, conti):
-        self.wave, self.flux, self.err = wave, flux, err
+    def fit_all(self, flux, err, conti):
+        self.flux, self.err = flux, err
         if self.arr_section is None:
             return None
 
@@ -195,8 +194,9 @@ class LineFit:
 
             xsec.fit(flux, err, conti)
             self.arr_fitted[i] = True
-            self.gauss_line[i] = xsec.gauss_line
-            self.line_result[i] =
+            self.gauss_result[i] = xsec.fparams
+            self.line_result[i] = xsec.fitting_result
+            self.line_result_name[i] = xsec.fitting_res_name
 
     @property
     def all_comp_range(self):
@@ -211,6 +211,7 @@ class LineFit:
             self.MC = MC
 
             self.tlinelist = linelist[self.line_indices]
+            self.sec_name = self.tlinelist['compname'][0]
             # read section range from table
             self.section_range = [self.tlinelist[0]['minwav'], self.tlinelist[0]['maxwav']]
             self.section_indices = (wave > self.section_range[0]) & (wave < self.section_range[1])
@@ -226,24 +227,25 @@ class LineFit:
             self.wave, self.line_flux, self.err = wave, None, None
             self.twave, self.tline_flux, self.terr = wave[self.section_indices], None, None
 
-            self._fwhms = np.zeros(self.n_line)
-            self._fwhms_error = np.zeros(self.n_line)
-            self._peaks_error = np.zeros(self.n_line)
+            self._fwhms = None
+            self._fwhms_error = None
+            self._peaks_error = None
+            self._fitting_result = None
+            self._fitting_res_name = None
 
         def fit(self, flux, err, conti):
-            print(self.tlinelist['compname'][0])
+            print(self.sec_name)
 
             # call kmpfit for lines
             self._construct_LineParam()
             self.line_flux, self.err = flux, err
             self.tline_flux, self.terr = flux[self.section_indices], err[self.section_indices]
-            """The key function to do the line fit with kmpfit"""
+            """The key function to do the line fit with lmpfit"""
             # initial parameter definition
-
             lmpargs = [np.log(self.twave), self.tline_flux, self.terr]
             line_fit = minimize(self.residuals_line, self.iparams, args=lmpargs, calc_covar=False)
             self.fparams = self.tmpparams
-            self.gauss_line = LineProperties(self.twave, self.fparams).gauss_line
+            self.gauss_line = manygauss(np.log(self.twave), self.fparams)
 
             if self.MC and self.n_trails > 0:
                 self.mc_fit(line_fit, conti)
@@ -311,17 +313,14 @@ class LineFit:
 
             self.iparams = fit_params
 
-        def residuals_line(self, pp: np.array, data: Tuple[np.array, np.array, np.array]) -> np.array:
+        def residuals_line(self, pp: np.array, xval, yval, weight) -> np.array:
             """The line residual function used in kmpfit"""
-            xval, yval, weight = data
-
+            pps = np.array(list(pp.valuesdict().values()))
             # Compute line linking prior to residual calculation
-            self._lineflux_link(pp)
-            self._lineprofile_link(pp)
+            self._lineflux_link(pps)
+            self._lineprofile_link(pps)
 
-            self.tmpparams = pp
-
-            return (yval - manygauss(xval, pp)) / weight
+            return (yval - manygauss(xval, pps)) / weight
 
         def _lineflux_link(self, pp: np.array) -> None:
             """rescale the height of fitted line if height/flux is linked to another line"""
@@ -343,6 +342,7 @@ class LineFit:
                     # If component set exactly to be a multiplier of the linked component, scale it to multiplier
                     elif input_flux[1][0] not in '<>':
                         pp[5 * line_index] = pp[5 * link_index] * float(input_flux[1]) / flux_target * flux_now
+            self.tmpparams = pp
 
         def _lineprofile_link(self, pp: np.array) -> None:
             """reset the sigma, skew, velocity offset, and gamma of component to linked component"""
@@ -357,14 +357,16 @@ class LineFit:
                     pp[5 * line_index + 2] = pp[5 * link_index + 2]
                     pp[5 * line_index + 3] = pp[5 * link_index + 3]
                     pp[5 * line_index + 4] = pp[5 * link_index + 4]
+            self.tmpparams = pp
 
         def _calculate_FWHM_peak(self, pp: np.array) -> Tuple[np.array, np.array]:
             tmp_fwhm = np.zeros(self.n_line)
             tmp_peak = np.zeros(self.n_line)
             pps = np.split(pp, len(self.tlinelist['compname']))
+
             for i, xx in enumerate(pps):
                 tmp_fwhm[i] = LineProperties(self.twave, xx).fwhm
-                tmp_fwhm[i] = LineProperties(self.twave, xx).peak
+                tmp_peak[i] = LineProperties(self.twave, xx).peak
             return tmp_fwhm, tmp_peak
 
         def mc_fit(self, ini_fit, conti):
@@ -425,18 +427,48 @@ class LineFit:
 
         @property
         def fitting_result(self):
-            values = np.asarray([np.concatenate([[self.fwhms[i]], j]) for i, j in enumerate(self.fparams)])
-            errors = np.asarray([np.concatenate([[self.fwhms_error[i]], j]) for i, j in enumerate(self.fparams_errors)])
+            if self._fitting_result is not None:
+                return self._fitting_result
+            params = np.split(self.fparams, self.n_line)
+            values = np.asarray([np.concatenate([[self.fwhms[i]], j]) for i, j in enumerate(params)])
+
+            self._fitting_result = values
+
+            if self.MC and self.n_trails > 0:
+                errors = np.asarray([np.concatenate([[self.fwhms_error[i]], j])
+                                     for i, j in enumerate(self.fparams_errors)])
+                self._fitting_result = array_interlace(values, errors)
+
+            return self._fitting_result
+
+        @property
+        def fitting_res_name(self):
+            if self._fitting_res_name is not None:
+                return self._fitting_res_name
+
+            gauss_property = ['fwhm', 'scale', 'centerwave', 'sigma', 'skewness', 'gamma']
+            line_names = np.array(self.tlinelist['linename'])
+            names = np.array([[f"{lnames}_{xproperty}" for xproperty in gauss_property]
+                              for lnames in line_names], dtype='U50')
+            self._fitting_res_name = names
+
+            if self.MC and self.n_trails > 0:
+                errors = np.array([f"{n}_err" for n in names], dtype=f'<U50')
+                self._fitting_res_name = array_interlace(names, errors)
+
+            return self._fitting_res_name
+
 
 class LineProperties:
     def __init__(self, wave: np.array, pp: np.array, conti: np.array = None):
         self.pp = pp.astype(float)
         self.n_gauss = int(len(pp) / 5)
+
         self.conti = np.ones_like(wave) if conti is None else conti
 
         self.cen, self.sig, self.skw = None, None, None
         self.line_gaussian_pp()
-        self.wave, self.gauss_line = self.line_model_compute(wave)
+        self.wave, self.line_profile = self.line_model_compute(wave)
 
         self._area, self._ew = None, None
 
@@ -479,7 +511,7 @@ class LineProperties:
 
     def line_flux_ew(self) -> Tuple[float, float]:
         """Calculates the total broad line flux and equivalent width (EW)."""
-        xx, yy = self.wave, self.gauss_line
+        xx, yy = self.wave, self.line_profile
         ff = interpolate.interp1d(xx, self.conti, bounds_error=False, fill_value=0)
         valid_indices = yy > 0.01 * np.amax(yy)
         area = np.trapz(yy[valid_indices], x=xx[valid_indices])
@@ -496,7 +528,7 @@ class LineProperties:
     def fwhm(self):
         if self.n_gauss == 0:
             return 0
-        xx, yy = self.wave, self.gauss_line
+        xx, yy = self.wave, self.line_profile
         cen = np.exp(np.mean(self.cen))
         if np.max(yy) > 0:
             spline = interpolate.UnivariateSpline(xx, yy - np.max(yy) / 2, s=0)
@@ -513,7 +545,7 @@ class LineProperties:
     def peak(self):
         if self.n_gauss == 0:
             return 0
-        xx, yy = self.wave, self.gauss_line
+        xx, yy = self.wave, self.line_profile
         single_peak = xx[np.argmax(abs(yy))]
         peak = single_peak if self.n_gauss == 1 else self.line_peak()
         return peak

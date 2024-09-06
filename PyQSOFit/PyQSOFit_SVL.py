@@ -378,7 +378,7 @@ class QSOFit:
         self.plot_line_name = plot_line_name
         self.plot_legend = plot_legend
         self.save_fig = save_fig
-        self.gauss_line = []
+        self.gauss_line = None
 
         self.contiobj = ContiFit(path=self.path, Fe_uv_op=Fe_uv_op, poly=poly, BC=BC, CFT=CFT,
                                  MC_conti=MC_conti, n_trails=n_trails)
@@ -725,109 +725,20 @@ class QSOFit:
 
         return None
 
-
-    def _DoLineFit_sectiondefinitions(self) -> list:
-        """Reads the Component_definition.py file to obtain the sections to line fit"""
-        bool_fitted_section = (self.linelist['lambda'] > self.wave.min()) & (self.linelist['lambda'] < self.wave.max())
-        fitted_section_index = np.where(bool_fitted_section, True, False)
-
-        # sort section name with line wavelength
-        uniq_linecomp, uniq_ind = np.unique(self.linelist['compname'][fitted_section_index], return_index=True)
-        return uniq_linecomp[self.linelist['lambda'][fitted_section_index][uniq_ind].argsort()]
-
-    def _DoLineFit_linefitresult(self, fit, all_para_std: np.array, fwhm_lines: np.array,
-                                 fwhm_std: np.array, indices: np.array, ) -> list:
-        """Translate the results of line fitting into a machine-readable format"""
-        comp_result_tmp = np.array([[self.linelist['compname'][indices][0]], [fit.status], [fit.chi2_min],
-                                    [fit.rchi2_min], [fit.niter], [fit.dof]]).flatten()
-
-        gauss_val = np.hstack((fwhm_lines.reshape(len(fwhm_lines), 1), np.split(fit.params, len(fwhm_lines)))).flatten()
-        if self.MC and self.n_trails > 0:
-            gauss_err = np.hstack((fwhm_std.reshape(len(fwhm_std), 1), np.split(all_para_std, len(fwhm_std)))).flatten()
-            gauss_result = self.array_interlace(gauss_val, gauss_err)
-        else:
-            gauss_result = gauss_val
-
-        return [comp_result_tmp, gauss_result]
-
-    def _DoLineFit_lineresultnames(self, section: SectionParameters) -> np.array:
-        """Create names for the result of line fitting for machine-readable format"""
-        section_number = str(self.ncomp)
-        section_property = ['_complex_name', '_line_status', '_line_min_chi2', '_line_red_chi2', '_niter', '_ndof']
-        comp_result_name = np.array([section_number + xproperty for xproperty in section_property], dtype='U50')
-
-        gauss_name = np.array([])
-        gauss_property = ['_fwhm', '_scale', '_centerwave', '_sigma', '_skewness', '_gamma']
-        # for each fitted line
-        for n in range(section.n_line):
-            line_name = self.linelist['linename'][section.line_indices][n]
-            gauss_result_names = np.array([line_name + xproperty for xproperty in gauss_property], dtype='U50')
-
-            if self.MC and self.n_trails > 0:
-                gauss_error_names = np.array([xname + "_err" for xname in gauss_result_names], dtype='U50')
-                gauss_name = np.append(gauss_name, self.array_interlace(gauss_result_names, gauss_error_names))
-            else:
-                gauss_name = np.append(gauss_name, gauss_result_names)
-
-        return np.concatenate([comp_result_name, gauss_name.flatten()])
-
-
     def _DoLineFit(self):
         linelist = fits.open(self.path + 'qsopar2.fits')[1].data
 
-        self.lineobj.initalise(linelist)
+        self.lineobj.initialise(linelist, self.wave)
 
         # define arrays for result taking
         self.all_comp_range = self.lineobj.all_comp_range
-        self.lineobj.fit_all()
+        self.lineobj.fit_all(self.line_flux, self.err, self.f_conti_model)
 
+        self.gauss_result = np.concatenate(self.lineobj.gauss_result)
+        self.gauss_line = manygauss(self.wave, self.gauss_result)
+        self.line_result = np.concatenate(self.lineobj.line_result).flatten()
+        self.line_result_name = np.concatenate(self.lineobj.line_result_name).flatten()
 
-    # line function-----------
-    def _DoLineFit2(self):
-        """Runs the emission line modelling process"""
-        # read line parameter
-        linelist = fits.open(self.path + 'qsopar2.fits')[1].data
-        self.linelist = linelist
-
-        # define the sections for fitting
-        self.uniq_linecomp_sort = self._DoLineFit_sectiondefinitions()
-        self.ncomp = len(self.uniq_linecomp_sort)
-        if self.ncomp == 0:
-            print("No line to fit! Please set Line_fit to FALSE or enlarge wave_range!")
-            return np.asarray([]), np.asarray([])
-
-        # define arrays for result taking
-        gauss_line = np.empty(self.ncomp, dtype=list)
-        line_result = np.empty(self.ncomp, dtype=list)
-        line_result_name = np.empty(self.ncomp, dtype=list)
-        gauss_result = np.empty(self.ncomp, dtype=list)
-        self.all_comp_range = np.empty(self.ncomp, dtype=list)
-
-        # loop over each section and fit n lines simultaneously
-        for xsection in range(self.ncomp):
-            # component definitions for this section
-            xsection_param = SectionParameters(self.wave, self.linelist, self.uniq_linecomp_sort[xsection])
-            self.all_comp_range[xsection] = xsection_param.section_range
-
-            # skip section if less than 10 pixels to fit
-            if np.sum(xsection_param.section_indices) <= 10:
-                print("less than 10 pixels in line fitting!")
-                continue
-
-            # Fit lines and obtain results
-            section_fit_result = self._DoLineFit_linefitting(xsection_param)
-            gauss_line[xsection] = manygauss(np.log(self.wave), section_fit_result[0].params)
-
-            # Turn results into machine-readable format
-            tmp = self._DoLineFit_linefitresult(*section_fit_result, indices=xsection_param.line_indices)
-            line_result[xsection] = np.concatenate(tmp)
-            gauss_result[xsection] = tmp[1]
-            line_result_name[xsection] = self._DoLineFit_lineresultnames(xsection_param)
-
-        self.gauss_line = gauss_line
-        self.gauss_result = np.concatenate(gauss_result)
-        self.line_result = np.concatenate(line_result)
-        self.line_result_name = np.concatenate(line_result_name)
         return self.line_result, self.line_result_name
 
 
@@ -941,24 +852,24 @@ class QSOFit:
     def _plotSubPlot_Elines(self, arr_conti: np.array) -> None:
         """Plotting emission lines onto main spectrum figure"""
         if self.MC:
-            for p in range(int(len(self.gauss_result) / 12)):
-                if self.gauss_result[6 * (p - 1) + 12] < 1200.:
+            for p in range(int(len(self.line_result) / 12)):
+                if self.line_result[6 * (p - 1) + 12] < 1200.:
                     color = 'g'
                 else:
                     color = 'r'
-                gauss_line = manygauss(np.log(self.wave), self.gauss_result[::2][p * 6:(p + 1) * 6][1:])
+                gauss_line = manygauss(np.log(self.wave), self.line_result[::2][p * 6:(p + 1) * 6][1:])
                 plt.plot(self.wave, gauss_line + arr_conti, color=color)
-            total_param = np.delete(self.gauss_result[::2], np.arange(0, self.gauss_result[::2].size, 6))
+            total_param = np.delete(self.line_result[::2], np.arange(0, self.line_result[::2].size, 6))
 
         else:
-            for p in range(int(len(self.gauss_result) / 6)):
-                if self.gauss_result[6 * (p - 1) + 6] < 1200.:
+            for p in range(int(len(self.line_result) / 6)):
+                if self.line_result[6 * (p - 1) + 6] < 1200.:
                     color = 'g'
                 else:
                     color = 'r'
-                gauss_line = manygauss(np.log(self.wave), self.gauss_result[p * 6:(p + 1) * 6][1:])
+                gauss_line = manygauss(np.log(self.wave), self.line_result[p * 6:(p + 1) * 6][1:])
                 plt.plot(self.wave, gauss_line + arr_conti, color=color)
-            total_param = np.delete(self.gauss_result, np.arange(0, self.gauss_result.size, 6))
+            total_param = np.delete(self.line_result, np.arange(0, self.line_result.size, 6))
 
         total_gauss_line = manygauss(np.log(self.wave), total_param)
         plt.plot(self.wave, total_gauss_line + arr_conti, 'b', label='line', lw=2)
@@ -969,7 +880,7 @@ class QSOFit:
 
         # Residual strength at each wavelength bin
         if linefit:
-            rms_line = self.line_flux - manygauss(np.log(self.wave), self.line_fit.params)
+            rms_line = self.line_flux - self.gauss_line
             noise_line = self.noise_calculator(rms_line)
             plt.plot(self.wave, np.random.normal(self.flux, noise_line, len(self.flux)), 'grey', alpha=0.5)
 
@@ -981,8 +892,8 @@ class QSOFit:
 
         # Markers for the continuum windows
         if self.contiobj.Fe_uv_op or self.contiobj.poly or self.contiobj.BC:
-            conti_window_markers = np.repeat(self.flux_prereduced.max() * 1.05, len(self.wave[self.tmp_all]))
-            plt.scatter(self.wave[self.tmp_all], conti_window_markers, color='grey', marker='o', alpha=0.5)
+            conti_window_markers = np.repeat(self.flux_prereduced.max() * 1.05, len(self.contiobj.twave))
+            plt.scatter(self.contiobj.twave, conti_window_markers, color='grey', marker='o', alpha=0.5)
 
         # Fitted Emission line models
         if linefit:
@@ -992,17 +903,18 @@ class QSOFit:
         plt.plot([0, 0], [0, 0], 'g', label='line na')
 
         # Continuum with Fe emission
-        if self.Fe_uv_op:
+        if self.contiobj.Fe_uv_op:
             plt.plot(self.wave, self.f_conti_model, 'c', lw=2, label='FeII')
 
         # Balmer Continuum
-        if self.BC:
+        if self.contiobj.BC:
             plt.plot(self.wave, self.PL_poly_BC, 'y', lw=2, label='BC')
 
-        if self.CFT:
+        if self.contiobj.CFT:
             plt.plot(self.wave, self.f_conti_model, color='orange', lw=2, label='conti')
         else:
-            plt.plot(self.wave, self.f_pl_model + self.f_poly_model, color='orange', lw=2, label='conti')
+            plt.plot(self.wave, self.contiobj.f_pl_model + self.contiobj.f_poly_model,
+                     color='orange', lw=2, label='conti')
 
         # Framing
         if not self.decomposed:
@@ -1034,15 +946,15 @@ class QSOFit:
 
     def _plotSubPlot_Lines(self) -> None:
         """Plotting the emission line subplot"""
-        for c in range(self.ncomp):
+        for c in range(self.lineobj.ncomp):
             # create subplot axes
-            if self.ncomp == 4:
+            if self.lineobj.ncomp == 4:
                 axn = plt.subplot(2, 12, (12 + 3 * c + 1, 12 + 3 * c + 3))
-            elif self.ncomp == 3:
+            elif self.lineobj.ncomp == 3:
                 axn = plt.subplot(2, 12, (12 + 4 * c + 1, 12 + 4 * c + 4))
-            elif self.ncomp == 2:
+            elif self.lineobj.ncomp == 2:
                 axn = plt.subplot(2, 12, (12 + 6 * c + 1, 12 + 6 * c + 6))
-            elif self.ncomp == 1:
+            elif self.lineobj.ncomp == 1:
                 axn = plt.subplot(2, 12, (13, 24))
             else:
                 print("Too many fitted sections to plot")
@@ -1060,7 +972,7 @@ class QSOFit:
             plt.ylim(f_min * 0.9, f_max * 1.1)
             axn.set_xticks([self.all_comp_range[c][0], np.round(np.mean(self.all_comp_range[c]), -1),
                             self.all_comp_range[c][1]])
-            plt.text(0.02, 0.9, self.uniq_linecomp_sort[c], fontsize=20, transform=axn.transAxes)
+            plt.text(0.02, 0.9, self.lineobj.uniq_linecomp_sort[c], fontsize=20, transform=axn.transAxes)
 
     def noise_calculator(self, rms_line: np.array) -> np.array:
         """Approximates fitting uncertainty with the rms of the residual at each bin"""

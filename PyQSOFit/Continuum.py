@@ -52,8 +52,9 @@ class ContiFit:
         self.lum_locs = [1350., 3000., 5100., 9750., 12300., 19750]
         self.fe4570 = 0
         self.fe4570_error = 0
+        self.CFT = CFT
 
-        if CFT:
+        if self.CFT:
             self.Fe_uv_op = False
             self.poly = False
             self.BC = False
