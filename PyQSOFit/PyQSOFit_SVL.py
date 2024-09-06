@@ -21,28 +21,24 @@ import matplotlib.pyplot as plt
 from scipy import interpolate
 from typing import Tuple
 
-from Spectra_handling.Spectrum_utls import skewed_voigt
-from Spectra_handling.Spectrum_plotting import blueshifting
+from Spectra_handling.Spectrum_utls import skewed_voigt, blueshifting
+from PyQSOFit.Continuum import ContiFit
+from PyQSOFit.Lines import LineFit
 from scipy.stats import median_abs_deviation as mad
-from kapteyn import kmpfit
-from PyAstronomy import pyasl
+from lmfit import minimize, Parameters, report_fit
 from extinction import fitzpatrick99, remove
+
+from PyAstronomy import pyasl
 from astropy.io import fits
 from astropy.cosmology import FlatLambdaCDM
-from astropy.modeling.blackbody import blackbody_lambda
 from astropy.table import Table
-import warnings
+
 from scipy.ndimage import gaussian_filter as g_filt
 from rebin_spec import rebin_spec
 
+import warnings
+
 warnings.filterwarnings("ignore")
-
-
-def smooth(y, box_pts):
-    """Smooth the flux with n pixels"""
-    box = np.ones(box_pts) / box_pts
-    y_smooth = np.convolve(y, box, mode='same')
-    return y_smooth
 
 
 def continuum_fitting(wave, flux, smooth_val=50, thres=2.5, end_clip=100):
@@ -65,98 +61,6 @@ def continuum_fitting(wave, flux, smooth_val=50, thres=2.5, end_clip=100):
         i += 1
 
     return rebin_spec(t_wave, ctm, wave)
-
-
-def Fe_flux_mgii(xval, pp):
-    """Fit the UV Fe compoent on the continuum from 1200 to 3500 A based on the Boroson & Green 1992."""
-    yval = np.zeros_like(xval)
-    wave_Fe_mgii = 10 ** fe_uv[:, 0]
-    flux_Fe_mgii = fe_uv[:, 1]
-    Fe_FWHM = pp[1]
-    xval_new = xval * (1.0 + pp[2])
-
-    ind = np.where((xval_new > 1200.) & (xval_new < 3500.), True, False)
-    if np.sum(ind) > 100:
-        if Fe_FWHM < 900.0:
-            sig_conv = np.sqrt(910.0 ** 2 - 900.0 ** 2) / 2. / np.sqrt(2. * np.log(2.))
-        else:
-            sig_conv = np.sqrt(Fe_FWHM ** 2 - 900.0 ** 2) / 2. / np.sqrt(2. * np.log(2.))  # in km/s
-        # Get sigma in pixel space
-        sig_pix = sig_conv / 106.3  # 106.3 km/s is the dispersion for the BG92 FeII template
-        khalfsz = np.round(4 * sig_pix + 1, 0)
-        xx = np.arange(0, khalfsz * 2, 1) - khalfsz
-        kernel = np.exp(-xx ** 2 / (2 * sig_pix ** 2))
-        kernel = kernel / np.sum(kernel)
-
-        flux_Fe_conv = np.convolve(flux_Fe_mgii, kernel, 'same')
-        tck = interpolate.splrep(wave_Fe_mgii, flux_Fe_conv)
-        yval[ind] = pp[0] * interpolate.splev(xval_new[ind], tck)
-    return yval
-
-
-def Fe_flux_balmer(xval, pp, xfe=None):
-    """Fit the optical FeII on the continuum from 3686 to 7484 A based on Vestergaard & Wilkes 2001"""
-    yval = np.zeros_like(xval)
-
-    if xfe is None:
-        wave_Fe_balmer = 10 ** fe_op[0]
-        mult_flux = fe_op[1:] * 1e15
-    else:
-        wave_Fe_balmer = xfe[0]
-        mult_flux = xfe[1:]
-    mult_scale = np.asarray(pp[2:])
-    # mult_flux = fe_op[1:]
-    flux_Fe_balmer = np.dot(mult_scale, mult_flux)
-
-    ind = np.where((wave_Fe_balmer > 3686.) & (wave_Fe_balmer < 7484.), True, False)
-    wave_Fe_balmer = wave_Fe_balmer[ind]
-    flux_Fe_balmer = flux_Fe_balmer[ind]
-
-    Fe_FWHM = pp[0]
-    xval_new = xval * (1.0 + pp[1])
-    ind = np.where((xval_new > 3686.) & (xval_new < 7484.), True, False)
-    if np.sum(ind) > 100:
-        if Fe_FWHM < 900.0:
-            sig_conv = np.sqrt(910.0 ** 2 - 900.0 ** 2) / 2. / np.sqrt(2. * np.log(2.))
-        else:
-            sig_conv = np.sqrt(Fe_FWHM ** 2 - 900.0 ** 2) / 2. / np.sqrt(2. * np.log(2.))  # in km/s
-        # Get sigma in pixel space
-        sig_pix = sig_conv / 106.3  # 106.3 km/s is the dispersion for the BG92 FeII template
-        khalfsz = np.round(4 * sig_pix + 1, 0)
-        xx = np.arange(0, khalfsz * 2, 1) - khalfsz
-        kernel = np.exp(-xx ** 2 / (2 * sig_pix ** 2))
-        kernel = kernel / np.sum(kernel)
-        flux_Fe_conv = np.convolve(flux_Fe_balmer, kernel, 'same')
-        tck = interpolate.splrep(wave_Fe_balmer, flux_Fe_conv)
-
-        yval[ind] = interpolate.splev(xval_new[ind], tck)
-        # yval[ind] = yval[ind] + interpolate.splev(xval[ind], tck) * 0.3
-    return yval
-
-
-def balmer_conti(xval, pp):
-    """Fit the Balmer continuum from the model of Dietrich+02"""
-    # xval = input wavelength, in units of A
-    # pp=[norm, Te, tau_BE] -- in units of [--, K, --]
-
-    lambda_BE = 3646.  # A
-    bbflux = blackbody_lambda(xval, pp[1]).value * 3.14  # in units of ergs/cm2/s/A
-    tau = pp[2] * (xval / lambda_BE) ** 3
-    result = pp[0] * bbflux * (1. - np.exp(-tau))
-    ind = np.where(xval > lambda_BE, True, False)
-    if ind.any():
-        result[ind] = 0.
-    return result
-
-
-def f_poly_conti(xval, pp):
-    """Fit the continuum with a polynomial component account for the dust reddening with a*X+b*X^2+c*X^3"""
-    xval2 = xval - 3000.
-    yval = 0. * xval2
-    for i in range(len(pp)):
-        yval = yval + pp[i] * xval2 ** (i + 1)
-    return yval
-
 
 def flux2L(flux, z):
     """Transfer flux to luminoity assuming a flat Universe"""
@@ -188,6 +92,7 @@ def manygauss(xval, pp):
 
 class LineProperties:
     """Class to hold the PyQSOFit output property for a line"""
+
     def __init__(self, properties: Tuple = (0, 0, 0, 0, 0, 0)):
         self.fwhm = properties[0]
         self.sigma = properties[1]
@@ -199,327 +104,10 @@ class LineProperties:
                      'ew': self.ew, 'peak': self.peak, 'area': self.area}
 
 
-class SectionParameters:
-    """class to hold to information about a fitting section when fitting a section of lines"""
-    def __init__(self, wave: np.array, linelist, section_lines: list):
-        self.line_indices = np.where(linelist['compname'] == section_lines, True, False)  # get line index
-        self.n_line = np.sum(self.line_indices)  # n line in one complex
-
-        linelist_fit = linelist[self.line_indices]
-        # read section range from table
-        self.section_range = [linelist_fit[0]['minwav'], linelist_fit[0]['maxwav']]
-        bool_section_indices = (wave > self.section_range[0]) & (wave < self.section_range[1])
-        self.section_indices = np.where(bool_section_indices, True, False)
-
-
-class InitialProfileParameters:
-    """class to translate input profile into input fitting parameters"""
-    def __init__(self, inputstring):
-        mode_definitions = inputstring
-        self.mode_mode = {"v": "", "g": "0", "s": "0"}
-        for xmode in mode_definitions.split(";"):
-            self.mode_mode[xmode[0]] = xmode.split("[")[1][:-1]
-
-    def process_profile(self, v_pos: float, voffset: float, ini_sig: str):
-        """function to call to run all the operations"""
-        ini_arr = np.empty(4, dtype=float)
-        par_arr = np.empty(4, dtype=dict)
-        ini_arr[0], par_arr[0] = self._sigma_defition(ini_sig)
-        ini_arr[1], par_arr[1] = self._velocity_offset_definition(v_pos, voffset)
-        ini_arr[2], par_arr[2] = self._gamma_defintion()
-        ini_arr[3], par_arr[3] = self._skew_definitions()
-        return {'ini_sig': ini_arr[0], 'sig_par': par_arr[0],
-                'ini_voff': ini_arr[1], 'lam_par': par_arr[1],
-                'ini_gam': ini_arr[2], 'gam_par': par_arr[2],
-                'ini_skw': ini_arr[3], 'skw_par': par_arr[3]}
-
-    def _velocity_offset_definition(self, v_pos: float, voffset: float):
-        """initialise the velocity offset bounds based on vmode"""
-        mode = self.mode_mode["v"]
-        lambda_low = v_pos - voffset
-        lambda_up = v_pos + voffset
-        if voffset == 0:  # Fixed
-            lam_par = {'fixed': True}
-        elif mode == "":  # Free
-            lam_par = {'limits': (lambda_low, lambda_up)}
-        elif mode == "+":  # positive only
-            lam_par = {'limits': (v_pos - voffset * 0.01, lambda_up)}
-        elif mode == "-":  # negative only
-            lam_par = {'limits': (lambda_low, v_pos + voffset * 0.01)}
-        elif mode == ".":  # exact as defined
-            v_pos += voffset
-            lam_par = {'fixed': True}
-        else:
-            print("Velocity offset input parameter error")
-            sys.exit()
-        return v_pos, lam_par
-
-    def _gamma_defintion(self):
-        """Turns gamma on or off and sets bounds for Voigt profile"""
-        mode = self.mode_mode["g"]
-        if mode == "0":  # off
-            ini_gam = 0
-            gam_par = {'fixed': True}
-        elif mode == "":  # free
-            ini_gam = 1e-2
-            gam_par = {'limits': (0, 1)}
-        else:
-            try:
-                ini_gam = float(mode)  # exact as defined
-                gam_par = {'fixed': True}
-            except ValueError:
-                print("Gamma input parameter error")
-                sys.exit()
-        return ini_gam, gam_par
-
-    def _skew_definitions(self):
-        """Initialises the first guess for skew and sets the bounds for skew"""
-        mode = self.mode_mode["s"]
-        if mode == "":  # Free
-            ini_skw = 0
-            skw_par = {}
-        elif mode == "0":  # off
-            ini_skw = 0
-            skw_par = {'fixed': True}
-        elif "," in mode:  # given range
-            try:
-                skw_down, skw_up = np.sort([float(mode.split(',')[0]), float(mode.split(',')[1])])
-                ini_skw = np.mean([skw_down, skw_up])
-                skw_par = {'limits': (skw_down, skw_up)}
-            except ValueError:
-                print("Skew input parameter error")
-                sys.exit()
-        else:
-            try:
-                ini_skw = float(mode)  # exact as defined
-                skw_down, skw_up = np.sort([ini_skw * 1.001, ini_skw * 0.999])
-                skw_par = {'limits': (skw_down, skw_up)}
-            except ValueError:
-                print("Skew input parameter error")
-                sys.exit()
-        return ini_skw, skw_par
-
-    def _sigma_defition(self, ini_sig: str):
-        """initialises the first guess for sigma and sets the bounds for sigma"""
-        if len(ini_sig.split(',')) == 1:    # Fixed sigma
-            sig_par = {'fixed': True}
-            ini_sig = float(ini_sig.split(',')[0])
-        else:   # Free sigma
-            sig_down, sig_up = np.sort([float(ini_sig.split(',')[0]), float(ini_sig.split(',')[1])])
-            ini_sig = np.mean([sig_down, sig_up])
-            sig_par = {'limits': (sig_down, sig_up)}
-        return ini_sig, sig_par
-
-
-class LineDef:
-    """
-            Class to create line profile to add to Section for fitting
-
-            Parameters:
-            -----------
-            l_name: str
-                Name of the line. Must be unique.
-
-            l_center: float
-                The rest wavelength for the line.
-
-            fwhm: tuple of two elements in km/s
-                  One value input as (500,) will fix the fwhm of the modelling profile at 500.
-                  Two values input as (1200, 7000) will have the fwhm range from 1200, 7000.
-                  Values are not exact due to conversion to a log scale during modelling.
-
-            profile_link: str, optional
-                 A string that tells PyQSOFit which line the profile of this one is linked to.
-                 For example, definition for OIII4959, will have 'OIII5007*1' as profile_link.
-                 This overwrites fwhm, meaning fwhm can be ignored.
-
-            skew: tuple of two elements
-                One value input as (2.3,) will fix the skew of the modelling profile at 2.3.
-                Two values input as (-10, 10) will have the skew range from -10 to 10.
-
-            gamma: str, optional
-                A string that controls the Voigt profile for the modelling.
-                By default, it is an empty string and will turn off Voigt profile and use Gaussian profile instead.
-
-                - If specified 'On', it will have a free gamma value and uses Voigt profile.
-
-                - If the string has 'f0.53', it will fix the gamma at 0.53.
-
-            voffset: float, in km/s
-                The range of velocity offset allowed from the centre wavelength.
-
-            vmode: str, optional
-                Controls how the voffset range is defined.
-
-                - Default is '', and means the offset is free on both ends.
-
-                - '+' restricts the range such that the velocity offset can only increase in wavelength.
-
-                - '-' restricts the range such that the velocity offset can only decrease in wavelength.
-
-                - '.' sets the velocity offset at the specified voffset value.
-
-            scale: float
-                A value that controls the scale of the modelling profile.
-
-            flux_link: str, optional
-                Tells PyQSOFit which line the flux of this one is linked to.
-                For example, definition for OIII4959, will have 'OIII5007*0.33' as flux_link.
-                This overwrites scale, meaning scale can be ignored.
-
-            default_bel: bool, optional.
-                If True will set the fwhm to (1200, 7000), voffset to 5e-3, and skew to (-10, 10).
-
-            default_nel. bool, optional.
-                If True will set the sig to (50, 1200), voffset to 1e-3, and skew to (0,).
-
-    """
-    def __init__(self, fwhm: Tuple = (100, 1000), profile_link: str = "", skew: Tuple = (-10, 10), gamma: str = "",
-                 vmode: str = "", voffset: float = 0.0, scale: float = 0.005, flux_link: str = "",
-                 default_bel: bool = False, default_nel: bool = False, *, l_name: str = "", l_center: float = 0.0):
-        self.l_name = l_name
-        self.l_center = l_center
-        self.fwhm = fwhm
-        self._sig = (0, 0.01)
-        self._voffset = voffset
-        self._skew = skew
-        self.gamma = gamma
-        self.vmode = vmode
-        self.plink = profile_link
-        self._scale = scale
-        self.flux_link = flux_link
-
-        if default_nel:
-            self.fwhm = (50, 1200)
-            self._voffset = 300
-            self._skew = (0,)
-        if default_bel:
-            self.fwhm = (1200, 7000)
-            self._voffset = 1500
-            self._skew = (-10, 10)
-
-    @property
-    def sig(self):
-        if len(self.fwhm) == 2:
-            self._sig = (self.fwhm_to_sig(self.fwhm[0]), self.fwhm_to_sig(self.fwhm[1]))
-            return f"[{self._sig[0]}, {self._sig[1]}]"
-        elif len(self._sig) == 1:
-            self._sig = (self.fwhm_to_sig(self.fwhm[0]),)
-            return f"[{self._sig[0]}]"
-        else:
-            print("Incorrect number of inputs for line fwhm. Should be 1 (exact) or 2 (range) values")
-            print("Default to narrow line")
-            return "[1e-5, 0.0017]"
-
-    @property
-    def scale(self):
-        if self.flux_link == "":
-            return str(self._scale)
-        elif "*" in self.flux_link:
-            return self.flux_link
-        else:
-            print("Incorrect inputs for line flux. Should be 1 float or 1 Line*multiplier (OIII*3)")
-            print("Default to 0.005")
-            return "0.005"
-
-    @property
-    def skew(self):
-        if len(self._skew) == 2:
-            return f"{self._skew[0]}, {self._skew[1]}"
-        elif len(self._skew) == 1:
-            return f"{self._skew[0]}"
-        else:
-            print("Incorrect number of inputs for line skew. Should be 1 (exact) or 2 (range) values")
-            print("Default to no skew")
-            return "0"
-
-    @property
-    def profile(self):
-        l_gamma = ""
-        l_voff = ""
-        if self.gamma == "On":
-            l_gamma = f"g[];"
-        elif "f" in self.gamma:
-            l_gamma = self.gamma[1:]
-        if l_voff != "":
-            l_voff = f"v[{self.vmode}];"
-
-        return f"{l_voff}{l_gamma}s[{self.skew}]"
-
-    @property
-    def sig_info(self):
-        if self.plink == "":
-            return self.sig
-        else:
-            return self.plink
-
-    @staticmethod
-    def fwhm_to_sig(xfwhm: float):
-        c = 299792.458  # km/s
-        return np.round(np.sqrt(np.log(1 + ((xfwhm / c / 2.355) ** 2))), 5)
-
-    @property
-    def voffset(self):
-        c = 299792.458  # km/s
-        wave_offset = self._voffset / 3e5 * self.l_center
-        log_offset = np.log(self.l_center + wave_offset) - np.log(self.l_center)
-        return log_offset
-
-class Section:
-    """
-    Class to create sections to add lines into for fitting
-
-    Call line_add to add a single line
-
-    Call add_lines to add a list of lines
-    """
-    def __init__(self, *, section_name: str = "", start_range: float = 0.0, end_range: float = 1.0):
-        self.section_name = section_name
-        self.start_range = start_range
-        self.end_range = end_range
-        self._lines = []
-        self.rarray = None
-
-    def line_add(self, new_line: LineDef):
-        if self.start_range <= new_line.l_center <= self.end_range:
-            self._lines.append(new_line)
-
-    def add_lines(self, lines: list):
-        for xline in lines:
-            self.line_add(xline)
-
-    @property
-    def lines(self):
-        if self.rarray is None:
-            xtuples = [self.linedef_to_tuple(xline) for xline in self._lines]
-            xdtype = np.dtype([('lambda', 'float32'), ('compname', 'U20'), ('minwav', 'float32'), ('maxwav', 'float32'),
-                               ('linename', 'U20'), ('sigval', 'U20'), ('voff', 'float32'), ('iniskw', 'U20'),
-                               ('fvalue', 'U20')])
-            self.rarray = np.rec.array(xtuples, dtype=xdtype)
-        return self.rarray
-
-    def linedef_to_tuple(self, xline: LineDef) -> Tuple:
-        return (xline.l_center, self.section_name, self.start_range, self.end_range, xline.l_name,
-                xline.sig_info, xline.voffset, xline.profile, xline.scale)
-
-    @staticmethod
-    def hdu_generate() -> fits.Header:
-        hdr = fits.Header()
-        hdr['lambda'] = 'Vacuum Wavelength in Ang'
-        hdr['minwav'] = 'Lower complex fitting wavelength range'
-        hdr['maxwav'] = 'Upper complex fitting wavelength range'
-        hdr['ngauss'] = 'Number of Gaussians for the line. Not all functions supported for >1'
-        hdr['sigval'] = 'Sigma information in strings, either a single value, [min, max], or name of line to tie to'
-        hdr['voff  '] = 'Limits on velocity offset from the central wavelength [lnlambda]'
-        hdr['iniskw'] = 'Initial guess of lineskew'
-        hdr['fvalue'] = 'Relative scale factor for entries w/ same findex'
-        return hdr
-
-
 class QSOFit:
 
     def __init__(self, lam, flux, err, z, ra=- 999., dec=-999., ebmv=None, plateid=None, mjd=None, fiberid=None,
-                 path=None, and_mask=None, or_mask=None):
+                 path=None, config=None, and_mask=None, or_mask=None):
         """
         Get the input data perpared for the QSO spectral fitting
 
@@ -563,14 +151,14 @@ class QSOFit:
         self.mjd = mjd
         self.fiberid = fiberid
         self.path = path
+        self.param_file_path = config
         self.ebmv = ebmv
         self.c = 299792.458  # km/s
 
     def Fit(self, name=None, nsmooth=1, and_or_mask=True, reject_badpix=True, deredden=True,
             decomposition_host=True, BC03=False, Mi=None, npca_gal=5, npca_qso=20,
-            Fe_uv_op=True, Conti_window=True, redshift=True,
-            poly=False, PL=True, CFT=False, CFT_smooth=75, BC=False, rej_abs=False, initial_guess=None, MC_conti=False,
-            MC=True, n_trails=1, linefit=True,
+            Fe_uv_op=True, redshift=True, poly=False, PL=True, CFT=False, CFT_smooth=75, BC=False,
+            MC_conti=False, MC=True, n_trails=1, linefit=True,
             save_result=True, plot_fig=True, save_fig=True, plot_line_name=True, plot_legend=True, dustmap_path=None,
             save_fig_path=None, save_fits_path=None, save_fits_name=None):
 
@@ -638,10 +226,6 @@ class QSOFit:
 
         BC: bool, optional
             if True, fit continuum with Balmer continua from 1000 to 3646A. Default: False
-
-        rej_abs: bool, optional
-            if True, it will iterate the continuum fitting for deleting some 3 sigmas out continuum window points
-            (< 3500A), which might fall into the broad absorption lines. Default: False
 
         initial_gauss: 1*14 array, optional
             better initial value will help find a solution faster. Default initial is np.array([0., 3000., 0., 0.,
@@ -787,22 +371,20 @@ class QSOFit:
         self.Mi = Mi
         self.npca_gal = npca_gal
         self.npca_qso = npca_qso
-        self.initial_guess = initial_guess
         self.host_decomposition = decomposition_host
-        self.Fe_uv_op = Fe_uv_op
-        self.Conti_window = Conti_window
-        self.poly = poly
-        self.CFT = CFT
-        self.CFT_smooth = CFT_smooth
         self.PL = PL
-        self.BC = BC
-        self.rej_abs = rej_abs
         self.MC = MC
-        self.MC_conti = MC_conti
         self.n_trails = n_trails
         self.plot_line_name = plot_line_name
         self.plot_legend = plot_legend
         self.save_fig = save_fig
+        self.gauss_line = []
+
+        self.contiobj = ContiFit(path=self.path, Fe_uv_op=Fe_uv_op, poly=poly, BC=BC, CFT=CFT,
+                                 MC_conti=MC_conti, n_trails=n_trails)
+        self.lineobj = None
+        if linefit:
+            self.lineobj = LineFit()
 
         # get the source name in plate-mjd-fiber, if no then None
         if name is None:
@@ -836,8 +418,8 @@ class QSOFit:
 
         # Apply smoothing if required
         if nsmooth is not None:
-            self.flux = smooth(self.flux, nsmooth)
-            self.err = smooth(self.err, nsmooth)
+            self.flux = self.smooth(self.flux, nsmooth)
+            self.err = self.smooth(self.err, nsmooth)
 
         # Handle SDSS masking operation
         if and_or_mask:
@@ -861,8 +443,8 @@ class QSOFit:
         self._OrignialSpec()
 
         if CFT:
-            self._reset_contipp_cft()
-            self._apply_cft()
+            self.host_decomposition = False
+            self._apply_cft(CFT_smooth)
 
         # do host decomposition --------------
         if self.z < 1.16 and self.host_decomposition:
@@ -873,7 +455,7 @@ class QSOFit:
                 print('redshift larger than 1.16 is not allowed for host decomposion!')
 
         # fit continuum --------------------
-        if not self.Fe_uv_op and not self.poly and not self.BC:
+        '''if not self.Fe_uv_op and not self.poly and not self.BC and not self.PL:
             self.line_flux = self.flux if self.line_flux is None else self.line_flux
             self.conti_fit = np.zeros_like(self.wave)
             self.f_bc_model = np.zeros_like(self.wave)
@@ -888,7 +470,8 @@ class QSOFit:
         else:
             print('Fit Conti')
             self._DoContiFit()
-            print('Conti done')
+            print('Conti done')'''
+        self._DoContiFit()
         # fit line
         print('Fit Line')
         if linefit:
@@ -912,7 +495,7 @@ class QSOFit:
 
     def _remove_bad_error(self):
         """deal with pixels with error equal 0 or inifity"""
-        ind_gooderror = [(self.err != 0) & ~np.isinf(self.err)]
+        ind_gooderror = (self.err != 0) & ~np.isinf(self.err)
         self.err = self.err[ind_gooderror]
         self.flux = self.flux[ind_gooderror]
         self.lam = self.lam[ind_gooderror]
@@ -995,15 +578,8 @@ class QSOFit:
 
         return SN_ratio_conti
 
-    def _reset_contipp_cft(self):
-        self.host_decomposition = False
-        self.poly = False
-        self.BC = False
-        self.Fe_uv_op = False
-        self.PL = False
-
-    def _apply_cft(self):
-        self.f_conti_model = continuum_fitting(self.wave, self.flux, self.CFT_smooth)
+    def _apply_cft(self, smooth):
+        self.f_conti_model = continuum_fitting(self.wave, self.flux, smooth)
         self.line_flux = self.flux - self.f_conti_model
 
     def _DoDecomposition(self):
@@ -1109,9 +685,7 @@ class QSOFit:
             fqso = interpolate.interp1d(wave_qso[ind_qso], flux_qso[0, ind_qso], bounds_error=False, fill_value=0)
             flux_qso_new[i, :] = fqso(self.wave[ind_data])
 
-        wave_new = self.wave[ind_data]
-        flux_new = self.flux[ind_data]
-        err_new = self.err[ind_data]
+        wave_new, flux_new, err_new = self.wave[ind_data], self.flux[ind_data], self.err[ind_data]
 
         flux_temp = np.vstack((flux_gal_new[0:self.npca_gal, :], flux_qso_new[0:self.npca_qso, :]))
         res = np.linalg.lstsq(flux_temp.T, flux_new)[0]
@@ -1121,241 +695,36 @@ class QSOFit:
 
         data_cube = np.vstack((wave_new, flux_new, err_new, host_flux, qso_flux))
 
-        ind_f4200 = [(wave_new > 4160.) & (wave_new < 4210.)]
+        ind_f4200 = (wave_new > 4160.) & (wave_new < 4210.)
         frac_host_4200 = np.sum(host_flux[ind_f4200]) / np.sum(flux_new[ind_f4200])
-        ind_f5100 = [(wave_new > 5080.) & (wave_new < 5130.)]
+        ind_f5100 = (wave_new > 5080.) & (wave_new < 5130.)
         frac_host_5100 = np.sum(host_flux[ind_f5100]) / np.sum(flux_new[ind_f5100])
 
         return data_cube
 
     def _DoContiFit(self):
         """Fit the continuum with PL, Polynomial, UV/optical FeII, Balmer continuum"""
-        global fe_uv, fe_op, fe_op_name
-        fe_uv = np.genfromtxt(self.path + 'feII_UV_Mejia.txt')
-        fe_op = np.genfromtxt(self.path + 'fe_optical.txt', delimiter='')[1:].T
-        fe_op_name = np.genfromtxt(self.path + 'fe_op_lines.csv', delimiter=',', dtype=str)[0]
-
-        '''
-        # do continuum fit--------------------------
-        window_all = np.array([[1150., 1170.], [1275., 1290.], [1350., 1360.], [1445., 1465.],
-                               [1690., 1705.], [1770., 1810.], [1970., 2400.], [2480., 2675.],
-                               [2925., 3400.], [3775., 3832.], [4000., 4050.], [4200., 4230.],
-                               [4435., 4640.], [5100., 5535.], [6005., 6035.], [6110., 6250.],
-                               [6800., 7000.], [7160., 7180.], [7500., 7800.], [8050., 8150.]])
-        '''
-        # 2 windows removed to allow for CIV abs line
-        if self.Conti_window:
-            window_all = np.array([[1150., 1170.], [1275., 1290.],
-                                   [1690., 1705.], [1770., 1810.], [1970., 2400.], [2480., 2675.],
-                                   [2925., 3300.], [3500., 3650.], [3775., 3832.], [4000., 4050.], [4200., 4270.],
-                                   [4470., 4650.], [5050., 5535.], [6005., 6035.], [6110., 6400.], [6700, 6750],
-                                   [6800., 7000.], [7170., 7240.], [7500., 7800.], [8050., 8150.],
-                                   [8528., 8930.], [9310., 9426.], [9666.24, 9786],
-                                   [10400., 10600.], [12000, 12433], [13333, 13360],
-                                   [13922, 14490], [16660, 18340], [19000, 19800]])
-        else:
-            window_all = np.array([[self.wave[0], self.wave[-1]]])
-
-        tmp_all = np.array([np.repeat(False, len(self.wave))]).flatten()
-        for jj in range(len(window_all)):
-            tmp = np.where((self.wave > window_all[jj, 0]) & (self.wave < window_all[jj, 1]), True, False)
-            tmp_all = np.any([tmp_all, tmp], axis=0)
-
-        if self.wave[tmp_all].shape[0] < 10:
-            print('Continuum fitting pixel < 10.  ')
-
-        # set initial paramiters for continuum
-        if self.initial_guess is not None:
-            pp0 = self.initial_guess
-        else:
-            # ini val
-            pp0 = np.array([0.001, 0,  # P-law norm, slope
-                            0., 15000., 0.5,  # BC norm, Te, Tau
-                            0., 0., 0.])  # Polynomial
-            global ppxfe
-            global feopxmg
-            ppxfe = len(pp0)
-            # pp_fe_op = np.concatenate([[3000., 0.], 0.2 * np.ones_like(fe_op_name[1:], dtype=float)])
-            pp_fe_op = [1000., 0, 0.0]
-            feopxmg = len(pp_fe_op) + ppxfe
-            pp_mg_op = np.asarray([0.01, 3000., 0.])
-            pp0 = np.concatenate([pp0, pp_fe_op, pp_mg_op])
-
-        conti_fit = kmpfit.Fitter(residuals=self._residuals,
-                                  data=(self.wave[tmp_all], self.flux[tmp_all], self.err[tmp_all]))
-        tmp_parinfo = [{'limits': (0., 100)}, {'limits': (-5., 3)},
-                       {'limits': (0, 100)}, {'limits': (10000., 50000.)}, {'limits': (0.1, 2.)},
-                       None, None, None]
-        # fe_op_info = [{'limits': (500., 5000.)}, {'limits': (-0.1, 0.1)},
-        #               *[{'limits': (0., 10. ** 10)} for i in fe_op_name[1:]]]
-        fe_op_info = [{'limits': (500., 5000.)}, {'limits': (-0.1, 0.1)}, {'limits': (0., 1000)}]
-        fe_mg_info = [{'limits': (0., 1000)}, {'limits': (1200., 10000.)}, {'limits': (-0.1, 0.1)}]
-
-        conti_fit.parinfo = np.concatenate([tmp_parinfo, fe_op_info, fe_mg_info])
-        conti_fit.fit(params0=pp0)
-
-        # Perform one iteration to remove 3sigma pixel below the first continuum fit
-        # to avoid the continuum windows falls within a BAL trough
-        if self.rej_abs:
-            if self.poly:
-                tmp_conti = conti_fit.params[0] * (self.wave[tmp_all] / 3000.0) ** conti_fit.params[1] + f_poly_conti(
-                    self.wave[tmp_all], conti_fit.params[5:8])
-            else:
-                tmp_conti = conti_fit.params[0] * (self.wave[tmp_all] / 3000.0) ** conti_fit.params[1]
-
-            ind_BAL = [(self.flux[tmp_all] < tmp_conti - 3. * self.err[tmp_all]) & (self.wave[tmp_all] < 3500.)]
-            ind_noBAL = [not b for b in ind_BAL]
-            f = kmpfit.Fitter(residuals=self._residuals,
-                              data=(self.wave[tmp_all][ind_noBAL],
-                                    smooth(self.flux[tmp_all][ind_noBAL], 10),
-                                    self.err[tmp_all][ind_noBAL]))
-
-            conti_fit.parinfo = tmp_parinfo
-            conti_fit.fit(params0=pp0)
+        contilist, window_all = self.read_conti_params()
+        self.contiobj.fit(self.wave, self.flux, self.err, contilist, window_all)
 
         # calculate continuum luminoisty
-        L = self._L_conti(self.wave, conti_fit.params)
-        f_4570 = self._fe4570(self.wave, conti_fit.params)
+        self.contiobj.calc_L(self.z)
+        self.contiobj.calc_fe4570()
 
-        # calculate MC err
-        if self.MC_conti and self.n_trails > 0:
-            conti_para_std, all_L_std, all_fe_std = self._conti_mc(self.wave[tmp_all], self.flux[tmp_all],
-                                                                   self.err[tmp_all], pp0,
-                                                                   conti_fit.parinfo, self.n_trails)
-
-        res_name = np.array(['ra', 'dec', 'plateid', 'MJD', 'fiberid', 'redshift', 'SN_ratio_conti', 'PL_norm',
-                             'PL_slope', 'BC_norm', 'BC_Te', 'BC_Tau', 'POLY_a', 'POLY_b', 'POLY_c',
-                             'L1350', 'L3000', 'L5100', 'L0.9', 'L1.2', 'L2.0', 'f4570'])
-
-        fe_name = np.array(['Fe_op_FWHM', 'Fe_op_shift', *fe_op_name[1:], 'Fe_uv_scale', 'Fe_uv_FWHM', 'Fe_uv_shift'])
+        res_name = np.array(['ra', 'dec', 'plateid', 'MJD', 'fiberid', 'redshift', 'SN_ratio_conti'])
+        self.conti_result = np.asarray([self.ra, self.dec, self.plateid, self.mjd, self.fiberid,
+                                        self.z, self.SN_ratio_conti])
         # get conti result -----------------------------
-        if not self.MC_conti:
-            self.conti_result = np.array(
-                [self.ra, self.dec, self.plateid, self.mjd, self.fiberid, self.z, self.SN_ratio_conti,
-                 *conti_fit.params[:8], *L, f_4570])
-            self.conti_result_name = res_name
-            self.fe_result = np.array([*conti_fit.params[ppxfe:]])
-            self.fe_result_name = fe_name
-
-        else:
-            res_err = np.concatenate([[i, j] for i, j in zip(conti_fit.params[:8],
-                                                             conti_para_std[:8])])
-            L_err = np.concatenate([[i, j] for i, j in zip(L, all_L_std)])
-            res_err_name = np.concatenate([[i, i + '_err'] for i in res_name[7:]])
-
-            self.conti_result = np.array(
-                [self.ra,self. dec, self.plateid, self.mjd, self.fiberid, self.z, self.SN_ratio_conti,
-                 *res_err, *L_err, f_4570, all_fe_std])
-            self.conti_result_name = np.array(
-                ['ra', 'dec', 'plateid', 'MJD', 'fiberid', 'redshift', 'SN_ratio_conti', *res_err_name])
-
-            self.fe_result = np.concatenate([[i, j] for i, j in zip(conti_fit.params[ppxfe:],
-                                                                    conti_para_std[ppxfe:])])
-            self.fe_result_name = np.concatenate([[i, i + '_err'] for i in fe_name])
-
-        self.conti_fit = conti_fit
-        self.tmp_all = tmp_all
+        self.conti_result_name = np.append(res_name, self.contiobj.conti_par_name)
+        self.conti_result = np.append(self.conti_result, self.contiobj.conti_par_values)
 
         # save different models--------------------
-        self.f_fe_mgii_model = Fe_flux_mgii(self.wave, conti_fit.params[feopxmg:])
-        self.f_fe_balmer_model = Fe_flux_balmer(self.wave, conti_fit.params[ppxfe:feopxmg])
-        self.f_pl_model = conti_fit.params[0] * (self.wave / 3000.0) ** conti_fit.params[1]
-        self.f_bc_model = balmer_conti(self.wave, conti_fit.params[2:5])
-        self.f_poly_model = f_poly_conti(self.wave, conti_fit.params[5:8])
-        self.PL_poly_BC = self.f_pl_model + self.f_poly_model + self.f_bc_model
-        self.f_conti_model = self.f_fe_mgii_model + self.f_fe_balmer_model + self.PL_poly_BC
+        self.PL_poly_BC = self.contiobj.f_pl_model + self.contiobj.f_poly_model + self.contiobj.f_bc_model
+        self.f_conti_model = self.contiobj.f_fe_mgii_model + self.contiobj.f_fe_balmer_model + self.PL_poly_BC
         self.line_flux = self.flux - self.f_conti_model
 
-        return
+        return None
 
-    def _L_conti(self, wave, pp):
-        """Calculate continuum Luminoisity at 1350,3000,5100A"""
-        conti_flux = pp[0] * (wave / 3000.0) ** pp[1] + f_poly_conti(wave, pp[5:8])
-
-        L = np.array([])
-        for LL in [1350., 3000., 5100., 9750., 12300., 19750]:
-            if wave.max() > LL > wave.min():
-                L_tmp = np.asarray([np.log10(LL * flux2L(conti_flux[np.where(abs(wave - LL) < 5.)].mean(), self.z))])
-            else:
-                L_tmp = np.array([-1.])
-            L = np.concatenate([L, L_tmp])  # save log10(L1350,L3000,L5100)
-        return L
-
-    def _fe4570(self, wave, pp):
-        fe_flux = Fe_flux_balmer(wave, pp[ppxfe:feopxmg])
-        fe_4570 = np.where((wave > 4434) & (wave < 4684), fe_flux, 0)
-
-        return np.trapz(fe_4570, dx=np.diff(self.wave)[0])
-
-    def _f_conti_all(self, xval, pp):
-        """
-        Continuum components described by 8 + x + y parameters
-         pp[0]: norm_factor for continuum f_lambda = (lambda/3000.0)^{-alpha}
-         pp[1]: slope for the power-law continuum
-         pp[2:5]: norm, Te and Tau_e for the Balmer continuum at <3646 A
-         pp[5:8]: polynomial for the continuum
-         pp[ppxfe:feopxmg]: x amount of parameters for Fe_optical. First 2 is FWHM and shift, the rest is scaling
-         pp[feopxmg]: y amount of parameters for Fe_mg.
-        """
-        f_Fe_MgII = Fe_flux_mgii(xval, pp[feopxmg:])  # iron flux for MgII line region
-        f_Fe_Balmer = Fe_flux_balmer(xval, pp[ppxfe:feopxmg])  # iron flux for balmer line region
-        f_pl = pp[0] * (xval / 3000.0) ** pp[1]  # power-law continuum
-        f_conti_BC = balmer_conti(xval, pp[2:5])  # Balmer continuum
-        f_poly = f_poly_conti(xval, pp[5:8])  # polynormal conponent for reddened spectra
-
-        if not self.PL:
-            f_pl = f_pl * 0
-        if not self.Fe_uv_op:
-            f_Fe_Balmer = f_Fe_Balmer * 0
-
-        if self.Fe_uv_op and not self.poly and not self.BC:
-            yval = f_pl + f_Fe_MgII + f_Fe_Balmer
-        elif self.Fe_uv_op and self.poly and not self.BC:
-            yval = f_pl + f_Fe_MgII + f_Fe_Balmer + f_poly
-        elif self.Fe_uv_op and not self.poly and self.BC:
-            yval = f_pl + f_Fe_MgII + f_Fe_Balmer + f_conti_BC
-        elif not self.Fe_uv_op and self.poly and not self.BC:
-            yval = f_pl + f_poly
-        elif not self.Fe_uv_op and not self.poly and not self.BC:
-            yval = f_pl
-        elif not self.Fe_uv_op and not self.poly and self.BC:
-            yval = f_pl + f_conti_BC
-        elif self.Fe_uv_op and self.poly and self.BC:
-            yval = f_pl + f_Fe_MgII + f_Fe_Balmer + f_poly + f_conti_BC
-        elif not self.Fe_uv_op and self.poly and self.BC:
-            yval = f_pl + f_Fe_Balmer + f_poly + f_conti_BC
-        else:
-            raise RuntimeError('No this option for Fe_uv_op, poly and BC!')
-
-        return yval
-
-    def _residuals(self, pp, data):
-        """Continual residual function used in kmpfit"""
-        xval, yval, weight = data
-        return (yval - self._f_conti_all(xval, pp)) / weight
-
-    # ---------MC error for continuum parameters-------------------
-    def _conti_mc(self, x, y, err, pp0, pp_limits, n_trails):
-        """Calculate the continual parameters' Monte carlo errrors"""
-        all_para = np.zeros(len(pp0) * n_trails).reshape(len(pp0), n_trails)
-        all_L = np.zeros(6 * n_trails).reshape(6, n_trails)
-        all_fe = np.zeros(n_trails)
-        all_para_std = np.zeros(len(pp0))
-        all_L_std = np.zeros(6)
-        for tra in range(n_trails):
-            flux = y + np.random.randn(len(y)) * err
-            conti_fit = kmpfit.Fitter(residuals=self._residuals, data=(x, flux, err), maxiter=50)
-            conti_fit.parinfo = pp_limits
-            conti_fit.fit(params0=pp0)
-            all_para[:, tra] = conti_fit.params
-            all_L[:, tra] = np.asarray(self._L_conti(x, conti_fit.params))
-            all_fe[tra] = np.asarray(self._fe4570(x, conti_fit.params))
-
-        for st in range(len(pp0)):
-            all_para_std[st] = all_para[st, :].std()
-        for ll in range(6):
-            all_L_std[ll] = all_L[ll, :].std()
-        return all_para_std, all_L_std, all_fe.std()
 
     def _DoLineFit_sectiondefinitions(self) -> list:
         """Reads the Component_definition.py file to obtain the sections to line fit"""
@@ -1366,7 +735,7 @@ class QSOFit:
         uniq_linecomp, uniq_ind = np.unique(self.linelist['compname'][fitted_section_index], return_index=True)
         return uniq_linecomp[self.linelist['lambda'][fitted_section_index][uniq_ind].argsort()]
 
-    def _DoLineFit_linefitresult(self, fit: kmpfit.Fitter, all_para_std: np.array, fwhm_lines: np.array,
+    def _DoLineFit_linefitresult(self, fit, all_para_std: np.array, fwhm_lines: np.array,
                                  fwhm_std: np.array, indices: np.array, ) -> list:
         """Translate the results of line fitting into a machine-readable format"""
         comp_result_tmp = np.array([[self.linelist['compname'][indices][0]], [fit.status], [fit.chi2_min],
@@ -1428,8 +797,16 @@ class QSOFit:
 
         return [line_fit, all_para_std, fwhm_lines, fwhm_std]
 
-    # line function-----------
     def _DoLineFit(self):
+        linelist = fits.open(self.path + 'qsopar2.fits')[1].data
+
+        self.lineobj.initalise(linelist)
+
+        # define arrays for result taking
+        self.all_comp_range = self.lineobj.all_comp_range
+
+    # line function-----------
+    def _DoLineFit2(self):
         """Runs the emission line modelling process"""
         # read line parameter
         linelist = fits.open(self.path + 'qsopar2.fits')[1].data
@@ -1476,87 +853,9 @@ class QSOFit:
         self.line_result_name = np.concatenate(line_result_name)
         return self.line_result, self.line_result_name
 
-    def _do_line_kmpfit(self, section: SectionParameters):
-        ind_line = section.line_indices
-        ind_n = section.section_indices
-        """The key function to do the line fit with kmpfit"""
-        kmpargs = [np.log(self.wave[ind_n]), self.line_flux[ind_n], self.err[ind_n], ind_line]
-        line_fit = kmpfit.Fitter(self._residuals_line, data=kmpargs)  # fitting wavelength in ln space
-        line_fit_ini = np.array([])
-        line_fit_par = np.array([])
-        self.f_ratio = np.zeros_like(self.linelist['linename'])
-
-        # initial parameter definition
-        for n in range(section.n_line):
-            # voffset initial is always at the line wavelength defined
-            ini_voff = np.log(self.linelist['lambda'][ind_line][n])
-
-            # -------------- Line Profile definitions -------------
-            # Cases with linked lines. Gamma, sigma, skew and voffset are all tied
-            if '*' in self.linelist['sigval'][ind_line][n]:
-                ini_sig, ini_skw = 0.0018, 0
-                sig_par, lam_par, gam_par, skw_par = [{'fixed': True}] * 4
-                if 'g' in self.linelist['iniskw'][ind_line][n]:
-                    ini_gam = 1e-3
-                else:
-                    ini_gam = 0
-            # Cases without linked lines
-            else:
-                # profile definitions based on the profile input that looks like this "v[+],g[45],s[-10,10]"
-                voffset = self.linelist['voff'][ind_line][n]
-                ini_sig = self.linelist['sigval'][ind_line][n].strip('[').strip(']')
-                nprofile = InitialProfileParameters(self.linelist['iniskw'][ind_line][n])
-                profile_pp = nprofile.process_profile(ini_voff, voffset, ini_sig)
-                ini_sig, sig_par = profile_pp["ini_sig"], profile_pp["sig_par"]
-                ini_voff, lam_par = profile_pp["ini_voff"], profile_pp["lam_par"]
-                ini_skw, skw_par = profile_pp["ini_skw"], profile_pp["skw_par"]
-                ini_gam, gam_par = profile_pp["ini_gam"], profile_pp["gam_par"]
-
-            # ----------------- Flux input parameters -----------------
-            fluxstring = self.linelist['fvalue'][ind_line][n]
-            if '[' in fluxstring:  # fixed
-                ini_flx = fluxstring.strip('[').strip(']')
-                if ',' in ini_flx:
-                    sc_down, sc_up = np.sort([float(ini_flx.split(',')[0]), float(ini_flx.split(',')[1])])
-                    ini_flx = np.mean([sc_down, sc_up])
-                    sc_par = {'limits': (sc_down, sc_up)}
-                else:
-                    ini_flx = float(ini_flx)
-                    sc_down, sc_up = np.sort([ini_flx * 1.03, ini_flx * 0.97])
-                    sc_par = {'limits': (sc_down, sc_up)}
-
-            elif '*' in fluxstring:  # linked
-                ini_flx = 0.005
-                if '<' in fluxstring or '>' in fluxstring:
-                    sc_par = {'limits': (1e-7, None)}
-                else:
-                    sc_par = {'fixed': True}
-
-            else:  # Free
-                if float(fluxstring) >= 0:
-                    ini_flx = float(fluxstring)
-                    sc_par = {'limits': (1e-7, None)}
-                else:
-                    ini_flx = float(fluxstring)
-                    sc_par = {'limits': (None, -1e-7)}
-
-            line_fit_ini0 = [ini_flx, ini_voff, ini_sig, ini_skw, ini_gam]
-            line_fit_ini = np.concatenate([line_fit_ini, line_fit_ini0])
-            # set up parameter limits
-            line_fit_par0 = [sc_par, lam_par, sig_par, skw_par, gam_par]
-            line_fit_par = np.concatenate([line_fit_par, line_fit_par0])
-
-        line_fit.parinfo = line_fit_par
-        line_fit.fit(params0=line_fit_ini)
-        line_fit.params = self.newpp
-
-        self.line_fit = line_fit
-        self.line_fit_ini = line_fit_ini
-        self.line_fit_par = line_fit_par
-        return line_fit
 
     # ---------MC error for emission line parameters-------------------
-    def _line_mc(self, x, line_to_fit, err, pp0, pp_limits, n_trails, ind_line) -> Tuple[np.array, np.array]:
+    '''def _line_mc(self, x, line_to_fit, err, pp0, pp_limits, n_trails, ind_line) -> Tuple[np.array, np.array]:
         """calculate the Monte Carlo error of line parameters"""
         all_pp_1comp = np.zeros(len(pp0) * n_trails).reshape(len(pp0), n_trails)
         all_pp_std = np.zeros(len(pp0))
@@ -1600,7 +899,7 @@ class QSOFit:
             if (st - 1) % 5 == 0:
                 all_pp_std[st] = peak_std[int(st / 5)]
 
-        return all_pp_std, fwhm_std
+        return all_pp_std, fwhm_std'''
 
     def _line_fwhm(self, xx: np.array, yy: np.array, centroid: float) -> float:
         """Creates a generator of the model shifted down in y-axis by half to find FWHM"""
@@ -1640,7 +939,7 @@ class QSOFit:
 
     def _line_flux_ew(self, xx: np.array, yy: np.array) -> Tuple[float, float]:
         """Calculates the total broad line flux and equivalent width (EW)."""
-        ff = interpolate.interp1d(self.wave, self.PL_poly_BC, bounds_error=False, fill_value=0)
+        ff = interpolate.interp1d(self.wave, self.f_conti_model, bounds_error=False, fill_value=0)
         valid_indices = yy > 0.01 * np.amax(yy)
         area = np.trapz(yy[valid_indices], x=xx[valid_indices])
         ew = area / np.mean(ff(xx[valid_indices]))
@@ -1691,7 +990,7 @@ class QSOFit:
 
         skew = -999 if n_gauss > 1 else np.mean(skw)
         xx, yy = self._line_model_compute(pp)
-        fwhm = self._line_fwhm(xx, yy, np.exp(np.mean(cen)))    # Calculate FWHM, -999 if error
+        fwhm = self._line_fwhm(xx, yy, np.exp(np.mean(cen)))  # Calculate FWHM, -999 if error
         area, ew = self._line_flux_ew(xx, yy)
         sigma = self._line_sigma(pp, cen, xx)
         single_peak = xx[np.argmax(abs(yy))]
@@ -1799,7 +1098,7 @@ class QSOFit:
             plt.plot(self.wave, self.host, 'purple', label='host')
 
         # Markers for the continuum windows
-        if self.Fe_uv_op or self.poly or self.BC:
+        if self.contiobj.Fe_uv_op or self.contiobj.poly or self.contiobj.BC:
             conti_window_markers = np.repeat(self.flux_prereduced.max() * 1.05, len(self.wave[self.tmp_all]))
             plt.scatter(self.wave[self.tmp_all], conti_window_markers, color='grey', marker='o', alpha=0.5)
 
@@ -1925,25 +1224,14 @@ class QSOFit:
             plt.ylabel(r'$\rm f_{\lambda}$ ($\rm 10^{-17} erg\;s^{-1}\;cm^{-2}\;\AA^{-1}$)', fontsize=20)
 
         if self.save_fig:
-            plt.savefig(save_fig_path + self.sdss_name + '.png')
+            plt.savefig(save_fig_path + '.png')
 
     @staticmethod
-    def Onegauss(xval: np.array, pp: np.array) -> np.array:
-        """The single Gaussian model used to fit the emission lines
-        Parameter: the scale factor, central wavelength in logwave, line FWHM in logwave
-        """
-        yval = pp[0] * skewed_voigt(xval, pp[1], pp[2], pp[4], pp[3])
-        return yval
-
-    @staticmethod
-    def Manygauss(xval: np.array, pp: np.array) -> np.array:
-        """The multi-Gaussian model used to fit the emission lines, it will call the onegauss function"""
-        ngauss = int(pp.shape[0] / 5)
-        if ngauss != 0:
-            yval = 0.
-            for i in range(ngauss):
-                yval = yval + onegauss(xval, pp[i * 5:(i + 1) * 5])
-            return yval
+    def smooth(y, box_pts):
+        """Smooth the flux with n pixels"""
+        box = np.ones(box_pts) / box_pts
+        y_smooth = np.convolve(y, box, mode='same')
+        return y_smooth
 
     def line_errordata_read(self, line_name: str) -> Tuple[list, list]:
         """Obtains id of line property within PyQSOFit line result list"""
@@ -2034,6 +1322,11 @@ class QSOFit:
             print(a, i, j)
             a += 1
 
-# Add CIV abs optional in continuum removal
-# Change abs output for min = peak
-# Add Fe emission scaling output functionality
+    def read_conti_params(self):
+        # read line parameter
+        hdul = fits.open(self.param_file_path)
+
+        conti_windows = np.vstack([np.array(t) for t in hdul[2].data])
+        data = hdul[3].data
+
+        return data, conti_windows

@@ -159,21 +159,20 @@ for xname, xz in zip(name, spec_z):
     a_path = loc + ('0000000' + str(int(xname)))[-7:] + '_1d.fits'
     a_spec = SixDFGSFitter(file_path=a_path, z=xz)
     a_spec.reset_output_spectrum()
-    a_spec.trim_spec((4000, 5500))
+    a_spec.trim_spec((4000, 7000))
 
-    q = QSOFit(*a_spec.output_spectrum, a_spec.err, z=0, path=path1)
+    q = QSOFit(*a_spec.output_spectrum, a_spec.err, z=0.06915, path=path1, config=path1+'qsopar2.fits')
 
     start = timeit.default_timer()
-    q.Fit(decomposition_host=True, PL=True, poly=True, Fe_uv_op=False, BC=True,
-          CFT_smooth=75, CFT=False, MC=False, MC_conti=False,
+    q.Fit(decomposition_host=True, PL=True, poly=True, Fe_uv_op=False, BC=False,
+          CFT_smooth=75, CFT=False, MC=False, MC_conti=True,
           nsmooth=1, deredden=False, reject_badpix=False, redshift=False,
-          initial_guess=None, n_trails=5, linefit=True, save_result=False, plot_fig=True, save_fig=False,
+          n_trails=25, linefit=False, save_result=False, plot_fig=False, save_fig=False,
           plot_line_name=True, plot_legend=True, dustmap_path=None, save_fig_path=None,
           save_fits_path=None, save_fits_name=None)
 
     plt.axvline(6885 / (1 + xz))
     plt.axvline(5577 / (1 + xz))
-
     # plt.close()
     end = timeit.default_timer()
     print('Fitting finished in : ' + str(np.round(end - start)) + 's')
