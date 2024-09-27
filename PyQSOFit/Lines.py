@@ -5,8 +5,6 @@ from typing import Tuple
 from astropy import units as u
 from astropy import constants as const
 from scipy import interpolate
-from scipy.stats import median_abs_deviation as mad
-from tensorflow.python.ops.numpy_ops.np_arrays import ndarray
 
 from Spectra_handling.Spectrum_utls import skewed_voigt
 import sys
@@ -400,16 +398,16 @@ class LineFit:
         def fwhms_error(self) -> np.array:
             if self._fwhms_error is None:
                 fwhm_s, peak_s = zip(*(self._calculate_FWHM_peak(pp) for pp in self.fparams_samples))
-                self._fwhms_error = 1.4826 * mad(fwhm_s, 0)
-                self._peaks_error = 1.4826 * mad(peak_s, 0)
+                self._fwhms_error = np.std(fwhm_s, 0)
+                self._peaks_error = np.std(peak_s, 0)
             return self._fwhms_error
 
         @property
         def peaks_error(self) -> np.array:
             if self._peaks_error is None:
                 fwhm_s, peak_s = zip(*(self._calculate_FWHM_peak(pp) for pp in self.fparams_samples))
-                self._fwhms_error = 1.4826 * mad(fwhm_s, 0)
-                self._peaks_error = 1.4826 * mad(peak_s, 0)
+                self._fwhms_error = np.std(fwhm_s, 0)
+                self._peaks_error = np.std(peak_s, 0)
             return self._peaks_error
 
         @property
@@ -417,7 +415,7 @@ class LineFit:
             all_pp_1comp = np.zeros(len(self.iparams) * self.n_trails).reshape(len(self.iparams), self.n_trails)
             all_pp_std = np.zeros(len(self.iparams))
             for st in range(len(self.iparams)):
-                all_pp_std[st] = 1.4826 * mad(all_pp_1comp[st, :])
+                all_pp_std[st] = np.std(all_pp_1comp[st, :])
                 if (st - 1) % 5 == 0:
                     all_pp_std[st] = self.peaks_error[int(st / 5)]
             return all_pp_std
@@ -538,7 +536,7 @@ class LineProperties:
             conti_error = 0
 
         err_peak = float(line_res[err_id[2]])
-        err_sig = self.sigma * float(err_id[0]) / self.fwhm
+        err_sig = self.sigma * float(line_res[err_id[0]]) / self.fwhm
         err_fwhm = float(line_res[err_id[0]])
         err_skw = -999 if self.skew == -999 else float(line_res[err_id[4]])
         err_scale = float(line_res[err_id[1]])
