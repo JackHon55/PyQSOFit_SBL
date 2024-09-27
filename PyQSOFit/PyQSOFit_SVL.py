@@ -18,6 +18,7 @@ import typing
 import numpy
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy.matlib import empty
 from scipy import interpolate
 from typing import Tuple
 
@@ -712,19 +713,21 @@ class QSOFit:
         return None
 
     def _DoLineFit(self):
-        linelist = fits.open(self.path + 'qsopar2.fits')[1].data
+        with fits.open(self.param_file_path) as hdul:
+            linelist = hdul[1].data.copy()
 
-        self.lineobj.initialise(linelist, self.wave)
+            self.lineobj.initialise(linelist, self.wave)
 
-        # define arrays for result taking
-        self.all_comp_range = self.lineobj.all_comp_range
-        self.lineobj.fit_all(self.line_flux, self.err, self.f_conti_model)
+            # define arrays for result taking
+            self.all_comp_range = self.lineobj.all_comp_range
+            self.lineobj.fit_all(self.line_flux, self.err, self.f_conti_model)
 
-        self.gauss_result = np.concatenate(self.lineobj.gauss_result)
-        self.gauss_line = manygauss(np.log(self.wave), self.gauss_result)
-        self.line_result = np.concatenate(self.lineobj.line_result).flatten()
-        self.line_result_name = np.concatenate(self.lineobj.line_result_name).flatten()
+            self.gauss_result = np.concatenate(self.lineobj.gauss_result)
+            self.gauss_line = manygauss(np.log(self.wave), self.gauss_result)
+            self.line_result = np.concatenate(self.lineobj.line_result).flatten()
+            self.line_result_name = np.concatenate(self.lineobj.line_result_name).flatten()
 
+        hdul.close()
         return self.line_result, self.line_result_name
 
     @staticmethod
@@ -922,7 +925,9 @@ class QSOFit:
         name_id, err_id = self.line_errordata_read(line_name)
         if len(name_id) == 0:
             print(f"{line_name} not fitted")
-            return np.zeros((2, len(properties)))
+            xkeys = ['fwhm', 'sigma', 'skew', 'ew', 'peak', 'area']
+            empty_dict = {i: j for i, j in zip(xkeys, np.zeros(len(xkeys)))}
+            return np.asarray([empty_dict, empty_dict])
 
         # Calculate values and errors for each property
         property_values = LineProperties(self.wave, self.line_result[name_id], self.f_conti_model)
@@ -971,9 +976,9 @@ class QSOFit:
 
     def read_conti_params(self):
         # read line parameter
-        hdul = fits.open(self.param_file_path)
+        with fits.open(self.param_file_path) as hdul:
+            conti_windows = np.vstack([np.array(t) for t in hdul[2].data.copy()])
+            data = hdul[3].data.copy()
 
-        conti_windows = np.vstack([np.array(t) for t in hdul[2].data])
-        data = hdul[3].data
-
+        hdul.close()
         return data, conti_windows

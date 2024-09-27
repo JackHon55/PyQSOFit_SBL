@@ -2,6 +2,8 @@ import numpy as np
 # import matplotlib
 
 # matplotlib.use('agg')
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS']='0'
 import matplotlib.pyplot as plt
 from Spectra_handling.AllSpectrum import *
 from Spectra_handling.Spectrum_utls import bpt_plotter, bpt_test, continuum_fitting
@@ -9,7 +11,7 @@ from PyQSOFit.PyQSOFit_SVL import *
 from rebin_spec import rebin_spec
 from scipy.signal import medfilt
 from tqdm import tqdm
-import os
+
 import warnings
 
 warnings.filterwarnings("ignore")

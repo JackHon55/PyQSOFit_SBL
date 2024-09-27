@@ -221,6 +221,7 @@ class LineFit:
 
             self.line_props = None
             self.gauss_line = None
+            self.line_fit = None
 
             self.iparams = None
             self.tmpparams = None
@@ -246,11 +247,11 @@ class LineFit:
             """The key function to do the line fit with lmpfit"""
             # initial parameter definition
             lmpargs = [np.log(self.twave), self.tline_flux, self.terr]
-            line_fit = minimize(self.residuals_line, self.iparams, args=lmpargs, calc_covar=False)
+            self.line_fit = minimize(self.residuals_line, self.iparams, args=lmpargs, calc_covar=False)
             self.fparams = self.tmpparams
             self.gauss_line = manygauss(np.log(self.twave), self.fparams)
             if self.MC and self.n_trails > 0:
-                self.mc_fit(line_fit, conti)
+                self.mc_fit(self.line_fit, conti)
 
         def _construct_LineParam(self):
             fit_params = Parameters()
@@ -398,25 +399,17 @@ class LineFit:
         @property
         def fwhms_error(self) -> np.array:
             if self._fwhms_error is None:
-                fwhm_err = np.empty(self.n_trails, dtype=float)
-                peak_err = np.empty(self.n_trails, dtype=float)
-                for i, pp in enumerate(self.fparams_samples):
-                    fwhm_s, peak_s = self._calculate_FWHM_peak(pp)
-                    fwhm_err[i] = 1.4826 * mad(fwhm_s, 0)
-                    peak_err[i] = 1.4826 * mad(peak_s, 0)
-                self._fwhms_error, self._peaks_error = fwhm_err, peak_err
+                fwhm_s, peak_s = zip(*(self._calculate_FWHM_peak(pp) for pp in self.fparams_samples))
+                self._fwhms_error = 1.4826 * mad(fwhm_s, 0)
+                self._peaks_error = 1.4826 * mad(peak_s, 0)
             return self._fwhms_error
 
         @property
         def peaks_error(self) -> np.array:
             if self._peaks_error is None:
-                fwhm_err = np.empty(self.n_trails, dtype=float)
-                peak_err = np.empty(self.n_trails, dtype=float)
-                for i, pp in enumerate(self.fparams_samples):
-                    fwhm_s, peak_s = self._calculate_FWHM_peak(pp)
-                    fwhm_err[i] = 1.4826 * mad(fwhm_s, 0)
-                    peak_err[i] = 1.4826 * mad(peak_s, 0)
-                self._fwhms_error, self._peaks_error = fwhm_err, peak_err
+                fwhm_s, peak_s = zip(*(self._calculate_FWHM_peak(pp) for pp in self.fparams_samples))
+                self._fwhms_error = 1.4826 * mad(fwhm_s, 0)
+                self._peaks_error = 1.4826 * mad(peak_s, 0)
             return self._peaks_error
 
         @property
@@ -463,6 +456,14 @@ class LineFit:
                 self._fitting_res_name = array_interlace(names, errors)
 
             return self._fitting_res_name
+
+        @property
+        def fitting_meta(self):
+            l = self.line_fit
+            meta_data = np.array([self.sec_name, l.success, l.chisqr, l.redchi, l.nfev, l.nfree])
+            meta_name = np.array(['line_status', 'line_min_chi2', 'line_red_chi2', 'niter', 'ndof'])
+            meta_name = np.array([f'{self.sec_name}_{i}' for i in meta_name])
+            return meta_data, meta_name
 
 
 class LineProperties:
@@ -529,9 +530,9 @@ class LineProperties:
     def line_error_calculate(self, name_id: list, err_id: list,
                              line_res: np.array, conti_res: np.array) -> np.array:
         """Perform basic error analysis calculations of the line"""
-        scale = float(line_res[name_id[1]])
+        scale = float(line_res[name_id[0]])
 
-        if conti_res[7] != 0:
+        if not conti_res is None and conti_res[7] != 0:
             conti_error = conti_res[8] / conti_res[7]
         else:
             conti_error = 0
